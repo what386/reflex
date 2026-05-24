@@ -32,6 +32,17 @@ impl LuaError {
             ),
         )
     }
+
+    pub fn unsupported_for_host(operation: impl Into<String>, host: impl Into<String>) -> Self {
+        Self::new(
+            ErrorKind::Unsupported,
+            format!(
+                "{} is not supported by Reflex host '{}'",
+                operation.into(),
+                host.into()
+            ),
+        )
+    }
 }
 
 impl Display for LuaError {
