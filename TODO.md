@@ -14,3 +14,6 @@
 - [ ] clipboard
       @created 2026-05-25 02:17
 
+- [ ] fuller window support?
+      @created 2026-05-25 02:19
+
