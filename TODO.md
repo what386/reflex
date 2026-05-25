@@ -17,3 +17,6 @@
 - [ ] fuller window support?
       @created 2026-05-25 02:19
 
+- [ ] message box
+      @created 2026-05-25 02:19
+
