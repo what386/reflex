@@ -5,9 +5,6 @@
 
 ## Tasks
 
-- [ ] todo: support more wayland standards, e.g. KDE
-      @created 2026-05-24 18:42
-
 - [ ] feat: bring back hotstrings somehow..
       @created 2026-05-24 19:02
 
