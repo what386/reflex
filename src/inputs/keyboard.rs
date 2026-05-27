@@ -1,5 +1,5 @@
 use crate::inputs::error::{KeypressError, Result};
-use crate::inputs::table::{KeySpec, parse_combo, parse_key};
+use crate::inputs::keys::{KeySpec, parse_combo, parse_key};
 use evdev::{AttributeSet, EventType, InputEvent, Key, uinput::VirtualDevice};
 use std::sync::{Mutex, OnceLock};
 
