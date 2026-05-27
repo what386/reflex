@@ -2,6 +2,8 @@
 
 Reflex scripts are plain Lua files. The `reflex` global is available everywhere; no imports are needed.
 
+Input handling is owned by `reflexd`. Start `reflexd` first, then run one or more scripts with `reflex script.lua`. Each script registers its own rules with the daemon; when a script exits, its rules are removed.
+
 ## reflex.signal
 
 Owns built-in and user-defined signals. Signals use `domain::event` names.
@@ -62,6 +64,8 @@ end)
 ```
 
 ## reflex.process
+
+Process APIs are not handled by `reflexd` and are unsupported by the default daemon-backed runner for now.
 
 ```lua
 reflex.process.spawn("kitty")
