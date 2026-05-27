@@ -18,4 +18,8 @@ fn main() {
         eprintln!("reflex: {err}");
         std::process::exit(1);
     }
+    if let Err(err) = runtime.run_loop() {
+        eprintln!("reflex: {err}");
+        std::process::exit(1);
+    }
 }
