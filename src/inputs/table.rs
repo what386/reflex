@@ -1,4 +1,4 @@
-use crate::keypress::error::{KeypressError, Result};
+use crate::inputs::error::{KeypressError, Result};
 use evdev::Key as EvdevKey;
 use std::collections::BTreeSet;
 

@@ -1,7 +1,8 @@
 use crate::host::{InputController, MouseMoveMode, Remapper};
-use crate::keypress::error::{KeypressError, Result};
-use crate::keypress::input;
-use crate::keypress::key::parse_combo;
+use crate::inputs::error::{KeypressError, Result};
+use crate::inputs::keyboard;
+use crate::inputs::keytable::parse_combo;
+use crate::inputs::mouse;
 use crate::lua::LuaError;
 use evdev::{AttributeSet, Device, EventType, InputEvent, Key, uinput::VirtualDevice};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -96,8 +97,8 @@ impl Remapper for LinuxKeypress {
     }
 
     fn remap_key(&self, from: &str, to: &str) -> std::result::Result<(), LuaError> {
-        let from = crate::keypress::parse_key(from).map_err(LuaError::from)?;
-        let to = crate::keypress::parse_key(to).map_err(LuaError::from)?;
+        let from = crate::inputs::parse_key(from).map_err(LuaError::from)?;
+        let to = crate::inputs::parse_key(to).map_err(LuaError::from)?;
         {
             let mut state = self.state.lock().unwrap();
             state.remaps.insert(from.evdev.code(), to.evdev.code());
@@ -116,23 +117,23 @@ impl InputController for LinuxKeypress {
     }
 
     fn key_send(&self, text: &str) -> std::result::Result<(), LuaError> {
-        input::type_text(text).map_err(LuaError::from)
+        keyboard::type_text(text).map_err(LuaError::from)
     }
 
     fn key_tap(&self, combo: &str) -> std::result::Result<(), LuaError> {
-        input::send_combo(combo).map_err(LuaError::from)
+        keyboard::send_combo(combo).map_err(LuaError::from)
     }
 
     fn key_down(&self, key: &str) -> std::result::Result<(), LuaError> {
-        input::key_down(key).map_err(LuaError::from)
+        keyboard::key_down(key).map_err(LuaError::from)
     }
 
     fn key_up(&self, key: &str) -> std::result::Result<(), LuaError> {
-        input::key_up(key).map_err(LuaError::from)
+        keyboard::key_up(key).map_err(LuaError::from)
     }
 
     fn mouse_move(&self, x: i32, y: i32, mode: MouseMoveMode) -> std::result::Result<(), LuaError> {
-        input::mouse_move(x, y, mode).map_err(LuaError::from)
+        mouse::mouse_move(x, y, mode).map_err(LuaError::from)
     }
 
     fn mouse_click(
@@ -141,19 +142,19 @@ impl InputController for LinuxKeypress {
         x: Option<i32>,
         y: Option<i32>,
     ) -> std::result::Result<(), LuaError> {
-        input::mouse_click(button, x, y).map_err(LuaError::from)
+        mouse::mouse_click(button, x, y).map_err(LuaError::from)
     }
 
     fn mouse_down(&self, button: &str) -> std::result::Result<(), LuaError> {
-        input::mouse_down(button).map_err(LuaError::from)
+        mouse::mouse_down(button).map_err(LuaError::from)
     }
 
     fn mouse_up(&self, button: &str) -> std::result::Result<(), LuaError> {
-        input::mouse_up(button).map_err(LuaError::from)
+        mouse::mouse_up(button).map_err(LuaError::from)
     }
 
     fn mouse_scroll(&self, delta: i32) -> std::result::Result<(), LuaError> {
-        input::mouse_scroll(delta).map_err(LuaError::from)
+        mouse::mouse_scroll(delta).map_err(LuaError::from)
     }
 }
 
