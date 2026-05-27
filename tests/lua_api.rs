@@ -1,12 +1,13 @@
-use reflex::lua::{LuaError, MouseMoveMode, ReflexHost, Runtime, RuntimeConfig, WindowHandle};
+use reflex::host::{
+    Host, InputController, MouseMoveMode, ProcessController, Remapper, unsupported_host,
+};
+use reflex::lua::{LuaError, Runtime, RuntimeConfig};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Default)]
 struct FakeHost {
     calls: Mutex<Vec<String>>,
-    clipboard: Mutex<String>,
-    window: Mutex<Option<WindowHandle>>,
 }
 
 impl FakeHost {
@@ -17,39 +18,27 @@ impl FakeHost {
     fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap().clone()
     }
-
-    fn with_window(window: WindowHandle) -> Self {
-        Self {
-            window: Mutex::new(Some(window)),
-            ..Self::default()
-        }
-    }
 }
 
-impl ReflexHost for FakeHost {
+impl Remapper for FakeHost {
+    fn name(&self) -> &'static str {
+        "fake-remap"
+    }
+
     fn register_bind(&self, combo: &str) -> Result<(), LuaError> {
         self.record(format!("bind:{combo}"));
         Ok(())
     }
 
-    fn register_bindstring(&self, text: &str) -> Result<(), LuaError> {
-        self.record(format!("bindstring:{text}"));
-        Ok(())
-    }
-
-    fn register_hotkey(&self, from: &str, to: &str) -> Result<(), LuaError> {
+    fn remap_key(&self, from: &str, to: &str) -> Result<(), LuaError> {
         self.record(format!("hotkey:{from}->{to}"));
         Ok(())
     }
+}
 
-    fn register_hotstring(&self, from: &str, to: &str) -> Result<(), LuaError> {
-        self.record(format!("hotstring:{from}->{to}"));
-        Ok(())
-    }
-
-    fn msgbox(&self, message: &str) -> Result<(), LuaError> {
-        self.record(format!("msgbox:{message}"));
-        Ok(())
+impl InputController for FakeHost {
+    fn name(&self) -> &'static str {
+        "fake-input"
     }
 
     fn key_send(&self, text: &str) -> Result<(), LuaError> {
@@ -96,117 +85,48 @@ impl ReflexHost for FakeHost {
         self.record(format!("mouse_scroll:{delta}"));
         Ok(())
     }
+}
 
-    fn window_find(&self, pattern: &str) -> Result<Option<WindowHandle>, LuaError> {
-        self.record(format!("window_find:{pattern}"));
-        Ok(self.window.lock().unwrap().clone())
+impl ProcessController for FakeHost {
+    fn name(&self) -> &'static str {
+        "fake-process"
     }
 
-    fn window_focus(&self, pattern: &str) -> Result<bool, LuaError> {
-        self.record(format!("window_focus:{pattern}"));
-        Ok(true)
-    }
-
-    fn window_close(&self, pattern: &str) -> Result<bool, LuaError> {
-        self.record(format!("window_close:{pattern}"));
-        Ok(true)
-    }
-
-    fn window_minimize(&self, pattern: &str) -> Result<bool, LuaError> {
-        self.record(format!("window_minimize:{pattern}"));
-        Ok(true)
-    }
-
-    fn window_maximize(&self, pattern: &str) -> Result<bool, LuaError> {
-        self.record(format!("window_maximize:{pattern}"));
-        Ok(true)
-    }
-
-    fn window_restore(&self, window: &WindowHandle) -> Result<(), LuaError> {
-        self.record(format!("window_restore:{}", window.id));
-        Ok(())
-    }
-
-    fn window_move(
-        &self,
-        window: &WindowHandle,
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-    ) -> Result<(), LuaError> {
-        self.record(format!(
-            "window_move:{}:{x}:{y}:{width}:{height}",
-            window.id
-        ));
-        Ok(())
-    }
-
-    fn window_exists(&self, pattern: &str) -> Result<bool, LuaError> {
-        self.record(format!("window_exists:{pattern}"));
-        Ok(true)
-    }
-
-    fn window_is_focused(&self, pattern: &str) -> Result<bool, LuaError> {
-        self.record(format!("window_is_focused:{pattern}"));
-        Ok(pattern == "Editor")
-    }
-
-    fn window_focused(&self) -> Result<Option<String>, LuaError> {
-        self.record("window_focused");
-        Ok(Some("Editor".to_string()))
-    }
-
-    fn window_handle_exists(&self, window: &WindowHandle) -> Result<bool, LuaError> {
-        self.record(format!("window_handle_exists:{}", window.id));
-        Ok(true)
-    }
-
-    fn window_title(&self, window: &WindowHandle) -> Result<String, LuaError> {
-        self.record(format!("window_title:{}", window.id));
-        Ok(window.title.clone())
-    }
-
-    fn clipboard_get(&self) -> Result<String, LuaError> {
-        self.record("clipboard_get");
-        Ok(self.clipboard.lock().unwrap().clone())
-    }
-
-    fn clipboard_set(&self, text: &str) -> Result<(), LuaError> {
-        self.record(format!("clipboard_set:{text}"));
-        *self.clipboard.lock().unwrap() = text.to_string();
-        Ok(())
-    }
-
-    fn clipboard_clear(&self) -> Result<(), LuaError> {
-        self.record("clipboard_clear");
-        self.clipboard.lock().unwrap().clear();
-        Ok(())
-    }
-
-    fn process_spawn(&self, program: &str, args: &[String]) -> Result<u32, LuaError> {
+    fn spawn(&self, program: &str, args: &[String]) -> Result<u32, LuaError> {
         self.record(format!("process_spawn:{program}:{}", args.join(",")));
         Ok(42)
     }
 
-    fn process_find(&self, name: &str) -> Result<Option<u32>, LuaError> {
+    fn find(&self, name: &str) -> Result<Option<u32>, LuaError> {
         self.record(format!("process_find:{name}"));
         Ok(Some(42))
     }
 
-    fn process_kill(&self, pid: u32) -> Result<(), LuaError> {
+    fn kill(&self, pid: u32) -> Result<(), LuaError> {
         self.record(format!("process_kill:{pid}"));
         Ok(())
     }
 
-    fn process_pkill(&self, name: &str) -> Result<u32, LuaError> {
+    fn pkill(&self, name: &str) -> Result<u32, LuaError> {
         self.record(format!("process_pkill:{name}"));
         Ok(1)
     }
 }
 
+fn fake_runtime_host(fake: Arc<FakeHost>) -> Host {
+    Host {
+        name: "fake",
+        remapping: fake.clone(),
+        input: fake.clone(),
+        process: fake.clone(),
+    }
+}
+
 fn runtime_with(host: Arc<FakeHost>) -> Runtime {
-    Runtime::new(RuntimeConfig { host }).unwrap()
+    Runtime::new(RuntimeConfig {
+        host: fake_runtime_host(host),
+    })
+    .unwrap()
 }
 
 #[test]
@@ -218,27 +138,23 @@ fn documented_namespaces_exist_and_sandbox_blocks_dangerous_calls() {
             assert(type(reflex) == "table")
             assert(type(reflex.signal.connect) == "function")
             assert(type(reflex.bind) == "function")
-            assert(type(reflex.bindstring) == "function")
             assert(type(reflex.hotkey) == "function")
-            assert(type(reflex.hotstring) == "function")
+            assert(reflex.bindstring == nil)
+            assert(reflex.hotstring == nil)
             assert(type(reflex.sleep) == "function")
-            assert(type(reflex.msgbox) == "function")
+            assert(type(reflex.key.type) == "function")
             assert(type(reflex.key.send) == "function")
             assert(type(reflex.mouse.move) == "function")
-            assert(type(reflex.window.find) == "function")
-            assert(type(reflex.clipboard.get) == "function")
+            assert(reflex.window == nil)
             assert(type(reflex.timer.new) == "function")
             assert(type(reflex.process.spawn) == "function")
             assert(type(reflex.str.trim) == "function")
             assert(type(reflex.table.merge) == "function")
-            assert(type(reflex.path.join) == "function")
+            assert(reflex.path == nil)
             assert(reflex.str.trim("  hi  ") == "hi")
             assert(reflex.str.join({ "a", "b" }, "-") == "a-b")
             assert(reflex.table.contains({ "a", "b" }, "b"))
             assert(reflex.table.merge({ a = 1 }, { b = 2 }).b == 2)
-            assert(reflex.path.basename("/tmp/example.txt") == "example.txt")
-            assert(reflex.path.stem("/tmp/example.txt") == "example")
-            assert(reflex.path.ext("/tmp/example.txt") == "txt")
 
             assert(require == nil)
             assert(load == nil)
@@ -253,6 +169,57 @@ fn documented_namespaces_exist_and_sandbox_blocks_dangerous_calls() {
             "api_test",
         )
         .unwrap();
+}
+
+#[test]
+fn unsupported_default_backend_errors_include_host_name() {
+    let runtime = Runtime::new(RuntimeConfig {
+        host: unsupported_host(),
+    })
+    .unwrap();
+    let err = runtime
+        .run_str("reflex.hotkey('capslock', 'ctrl')", "unsupported_host_test")
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("reflex.hotkey is not supported by Reflex host 'unsupported'"),
+        "{err}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn default_backend_uses_linux_backend_on_linux() {
+    let vars = [
+        "XDG_SESSION_TYPE",
+        "XDG_CURRENT_DESKTOP",
+        "DESKTOP_SESSION",
+        "KDE_FULL_SESSION",
+        "SWAYSOCK",
+        "HYPRLAND_INSTANCE_SIGNATURE",
+        "WAYLAND_DISPLAY",
+        "DISPLAY",
+    ];
+    let previous = vars.map(|name| (name, std::env::var_os(name)));
+
+    unsafe {
+        for name in vars {
+            std::env::remove_var(name);
+        }
+        std::env::set_var("XDG_SESSION_TYPE", "wayland");
+        std::env::set_var("WAYLAND_DISPLAY", "wayland-test");
+    }
+    let config = RuntimeConfig::default();
+
+    for (name, value) in previous {
+        match value {
+            Some(value) => unsafe { std::env::set_var(name, value) },
+            None => unsafe { std::env::remove_var(name) },
+        }
+    }
+
+    assert_eq!(config.host_name(), "linux");
 }
 
 #[test]
@@ -288,12 +255,9 @@ fn api_calls_delegate_to_host() {
         .run_str(
             r#"
             reflex.bind("ctrl+t", function() end)
-            reflex.bindstring("btw", function() end)
             reflex.hotkey("capslock", "ctrl")
-            reflex.hotstring("btw", "by the way")
-            reflex.msgbox("Hello")
-            reflex.key.send("Hi")
-            reflex.key.tap("ctrl+c")
+            reflex.key.type("Hi")
+            reflex.key.send("ctrl+c")
             reflex.key.down("shift")
             reflex.key.up("shift")
             reflex.mouse.move(100, 200)
@@ -303,9 +267,6 @@ fn api_calls_delegate_to_host() {
             reflex.mouse.down("left")
             reflex.mouse.up("left")
             reflex.mouse.scroll(-1)
-            reflex.clipboard.set("copy")
-            assert(reflex.clipboard.get() == "copy")
-            reflex.clipboard.clear()
             assert(reflex.process.spawn("app", "--flag") == 42)
             assert(reflex.process.find("app") == 42)
             reflex.process.kill(42)
@@ -317,46 +278,11 @@ fn api_calls_delegate_to_host() {
 
     let calls = host.calls();
     assert!(calls.contains(&"bind:ctrl+t".to_string()));
-    assert!(calls.contains(&"bindstring:btw".to_string()));
     assert!(calls.contains(&"hotkey:capslock->ctrl".to_string()));
-    assert!(calls.contains(&"hotstring:btw->by the way".to_string()));
     assert!(calls.contains(&"key_tap:ctrl+c".to_string()));
     assert!(calls.contains(&"mouse_move:5,6,Relative".to_string()));
     assert!(calls.contains(&"mouse_click:right:Some(3):Some(4)".to_string()));
     assert!(calls.contains(&"process_spawn:app:--flag".to_string()));
-}
-
-#[test]
-fn window_flat_and_object_apis_delegate_to_host() {
-    let host = Arc::new(FakeHost::with_window(WindowHandle::new("w1", "Editor")));
-    let runtime = runtime_with(host.clone());
-    runtime
-        .run_str(
-            r#"
-            assert(reflex.window.focus("Editor"))
-            assert(reflex.window.exists("Editor"))
-            assert(reflex.window.is_focused("Editor"))
-            assert(reflex.window.focused() == "Editor")
-            local win = reflex.window.find("Edit")
-            assert(win:title() == "Editor")
-            assert(win:exists())
-            win:focus()
-            win:minimize()
-            win:maximize()
-            win:restore()
-            win:move(1, 2, 3, 4)
-            win:close()
-            assert(reflex.window.wait("Edit", 0):title() == "Editor")
-            "#,
-            "window_test",
-        )
-        .unwrap();
-
-    let calls = host.calls();
-    assert!(calls.contains(&"window_find:Edit".to_string()));
-    assert!(calls.contains(&"window_title:w1".to_string()));
-    assert!(calls.contains(&"window_move:w1:1:2:3:4".to_string()));
-    assert!(calls.contains(&"window_restore:w1".to_string()));
 }
 
 #[test]
@@ -385,4 +311,34 @@ fn timers_fire_once_and_repeating_timers_can_be_cleared() {
 
     assert_eq!(runtime.lua().globals().get::<i64>("once").unwrap(), 1);
     assert_eq!(runtime.lua().globals().get::<i64>("ticks").unwrap(), 2);
+}
+
+#[test]
+fn run_loop_emits_lifecycle_signals_and_exits_when_requested() {
+    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    runtime
+        .run_str(
+            r#"
+            events = {}
+            reflex.signal.connect("reflex::started", function()
+              events[#events + 1] = "started"
+            end)
+            reflex.signal.connect("reflex::exiting", function()
+              events[#events + 1] = "exiting"
+            end)
+            reflex.timer.once(1, function()
+              events[#events + 1] = "timer"
+              reflex.exit()
+            end)
+            "#,
+            "lifecycle_test",
+        )
+        .unwrap();
+
+    runtime.run_loop().unwrap();
+
+    let events: mlua::Table = runtime.lua().globals().get("events").unwrap();
+    assert_eq!(events.get::<String>(1).unwrap(), "started");
+    assert_eq!(events.get::<String>(2).unwrap(), "timer");
+    assert_eq!(events.get::<String>(3).unwrap(), "exiting");
 }
