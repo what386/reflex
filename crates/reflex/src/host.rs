@@ -1,4 +1,5 @@
 use crate::lua::LuaError;
+pub use reflex_core::MouseMoveMode;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -31,12 +32,6 @@ pub trait InputController: Send + Sync {
     fn mouse_scroll(&self, delta: i32) -> Result<(), LuaError>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MouseMoveMode {
-    Absolute,
-    Relative,
-}
-
 pub trait ProcessController: Send + Sync {
     fn name(&self) -> &'static str;
     fn spawn(&self, program: &str, args: &[String]) -> Result<u32, LuaError>;
@@ -46,29 +41,21 @@ pub trait ProcessController: Send + Sync {
 }
 
 pub fn default_host() -> Host {
-    #[cfg(target_os = "linux")]
-    {
-        linux_host()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        unsupported_host()
-    }
+    unsupported_host()
 }
 
 pub fn unsupported_host() -> Host {
     host("unsupported")
 }
 
-#[cfg(target_os = "linux")]
-fn linux_host() -> Host {
-    let keypress = Arc::new(crate::inputs::LinuxKeypress::new());
-    Host {
-        name: "linux",
-        remapping: keypress.clone(),
-        input: keypress,
-        process: Arc::new(UnsupportedController { host: "linux" }),
-    }
+pub fn daemon_host() -> Result<Host, LuaError> {
+    let daemon = Arc::new(crate::daemon::client::DaemonHost::connect_default()?);
+    Ok(Host {
+        name: "reflexd",
+        remapping: daemon.clone(),
+        input: daemon.clone(),
+        process: daemon,
+    })
 }
 
 fn host(name: &'static str) -> Host {

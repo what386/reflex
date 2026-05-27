@@ -1,4 +1,5 @@
 use clap::Parser;
+use reflex::host::daemon_host;
 use reflex::lua::{Runtime, RuntimeConfig};
 use std::path::PathBuf;
 
@@ -10,7 +11,11 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    let runtime = Runtime::new(RuntimeConfig::default()).unwrap_or_else(|err| {
+    let host = daemon_host().unwrap_or_else(|err| {
+        eprintln!("reflex: {err}");
+        std::process::exit(1);
+    });
+    let runtime = Runtime::new(RuntimeConfig { host }).unwrap_or_else(|err| {
         eprintln!("reflex: {err}");
         std::process::exit(1);
     });

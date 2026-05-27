@@ -1,4 +1,4 @@
 pub mod components;
+pub mod daemon;
 pub mod host;
-pub mod inputs;
 pub mod lua;

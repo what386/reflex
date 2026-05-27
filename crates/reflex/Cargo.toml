@@ -1,0 +1,10 @@
+[package]
+name = "reflex"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { workspace = true }
+mlua = { workspace = true }
+reflex-core = { path = "../reflex-core" }
+serde_json = { workspace = true }

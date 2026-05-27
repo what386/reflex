@@ -1,4 +1,3 @@
-use crate::lua::{ErrorKind, LuaError};
 use std::fmt::{Display, Formatter};
 
 pub type Result<T> = std::result::Result<T, KeypressError>;
@@ -29,11 +28,5 @@ impl std::error::Error for KeypressError {}
 impl From<std::io::Error> for KeypressError {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
-    }
-}
-
-impl From<KeypressError> for LuaError {
-    fn from(value: KeypressError) -> Self {
-        LuaError::new(ErrorKind::Host, value.to_string())
     }
 }

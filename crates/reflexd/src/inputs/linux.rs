@@ -1,16 +1,13 @@
-use crate::host::{InputController, MouseMoveMode, Remapper};
 use crate::inputs::error::{KeypressError, Result};
-use crate::inputs::keyboard;
-use crate::inputs::mouse;
 use crate::inputs::keys::parse_combo;
-use crate::lua::LuaError;
 use evdev::{AttributeSet, Device, EventType, InputEvent, Key, uinput::VirtualDevice};
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 const VIRTUAL_DEVICE_NAME: &str = "reflex-keypress";
+pub type ClientId = u64;
 
 #[derive(Clone, Default)]
 pub struct LinuxKeypress {
@@ -19,16 +16,27 @@ pub struct LinuxKeypress {
 
 #[derive(Default)]
 struct State {
-    remaps: HashMap<u16, u16>,
+    next_order: u64,
+    remaps: Vec<Remap>,
     bindings: Vec<Binding>,
-    pending_bindings: VecDeque<String>,
+    pending_bindings: HashMap<ClientId, VecDeque<String>>,
     listener_started: bool,
 }
 
 #[derive(Clone)]
 struct Binding {
+    client_id: ClientId,
+    order: u64,
     original: String,
     keys: BTreeSet<u16>,
+}
+
+#[derive(Clone)]
+struct Remap {
+    client_id: ClientId,
+    order: u64,
+    from: u16,
+    to: u16,
 }
 
 impl LinuxKeypress {
@@ -36,9 +44,56 @@ impl LinuxKeypress {
         Self::default()
     }
 
-    pub fn drain_bindings(&self) -> Vec<String> {
+    pub fn register_bind_for(&self, client_id: ClientId, combo: &str) -> Result<()> {
+        let combo = parse_combo(combo)?;
+        {
+            let mut state = self.state.lock().unwrap();
+            let order = state.next_order;
+            state.next_order += 1;
+            state.bindings.push(Binding {
+                client_id,
+                order,
+                keys: combo.evdev_set(),
+                original: combo.original,
+            });
+        }
+        self.ensure_listener()
+    }
+
+    pub fn remap_key_for(&self, client_id: ClientId, from: &str, to: &str) -> Result<()> {
+        let from = crate::inputs::parse_key(from)?;
+        let to = crate::inputs::parse_key(to)?;
+        {
+            let mut state = self.state.lock().unwrap();
+            let order = state.next_order;
+            state.next_order += 1;
+            state.remaps.push(Remap {
+                client_id,
+                order,
+                from: from.evdev.code(),
+                to: to.evdev.code(),
+            });
+        }
+        self.ensure_listener()
+    }
+
+    pub fn drain_bindings_for(&self, client_id: ClientId) -> Vec<String> {
         let mut state = self.state.lock().unwrap();
-        state.pending_bindings.drain(..).collect()
+        state
+            .pending_bindings
+            .entry(client_id)
+            .or_default()
+            .drain(..)
+            .collect()
+    }
+
+    pub fn remove_client(&self, client_id: ClientId) {
+        let mut state = self.state.lock().unwrap();
+        state.remaps.retain(|remap| remap.client_id != client_id);
+        state
+            .bindings
+            .retain(|binding| binding.client_id != client_id);
+        state.pending_bindings.remove(&client_id);
     }
 
     fn ensure_listener(&self) -> Result<()> {
@@ -79,85 +134,6 @@ impl LinuxKeypress {
     }
 }
 
-impl Remapper for LinuxKeypress {
-    fn name(&self) -> &'static str {
-        "linux-keypress"
-    }
-
-    fn register_bind(&self, combo: &str) -> std::result::Result<(), LuaError> {
-        let combo = parse_combo(combo).map_err(LuaError::from)?;
-        {
-            let mut state = self.state.lock().unwrap();
-            state.bindings.push(Binding {
-                keys: combo.evdev_set(),
-                original: combo.original,
-            });
-        }
-        self.ensure_listener().map_err(LuaError::from)
-    }
-
-    fn remap_key(&self, from: &str, to: &str) -> std::result::Result<(), LuaError> {
-        let from = crate::inputs::parse_key(from).map_err(LuaError::from)?;
-        let to = crate::inputs::parse_key(to).map_err(LuaError::from)?;
-        {
-            let mut state = self.state.lock().unwrap();
-            state.remaps.insert(from.evdev.code(), to.evdev.code());
-        }
-        self.ensure_listener().map_err(LuaError::from)
-    }
-
-    fn drain_bind_events(&self) -> std::result::Result<Vec<String>, LuaError> {
-        Ok(self.drain_bindings())
-    }
-}
-
-impl InputController for LinuxKeypress {
-    fn name(&self) -> &'static str {
-        "linux-keypress"
-    }
-
-    fn key_send(&self, text: &str) -> std::result::Result<(), LuaError> {
-        keyboard::type_text(text).map_err(LuaError::from)
-    }
-
-    fn key_tap(&self, combo: &str) -> std::result::Result<(), LuaError> {
-        keyboard::send_combo(combo).map_err(LuaError::from)
-    }
-
-    fn key_down(&self, key: &str) -> std::result::Result<(), LuaError> {
-        keyboard::key_down(key).map_err(LuaError::from)
-    }
-
-    fn key_up(&self, key: &str) -> std::result::Result<(), LuaError> {
-        keyboard::key_up(key).map_err(LuaError::from)
-    }
-
-    fn mouse_move(&self, x: i32, y: i32, mode: MouseMoveMode) -> std::result::Result<(), LuaError> {
-        mouse::mouse_move(x, y, mode).map_err(LuaError::from)
-    }
-
-    fn mouse_click(
-        &self,
-        button: &str,
-        x: Option<i32>,
-        y: Option<i32>,
-    ) -> std::result::Result<(), LuaError> {
-        mouse::mouse_click(button, x, y).map_err(LuaError::from)
-    }
-
-    fn mouse_down(&self, button: &str) -> std::result::Result<(), LuaError> {
-        mouse::mouse_down(button).map_err(LuaError::from)
-    }
-
-    fn mouse_up(&self, button: &str) -> std::result::Result<(), LuaError> {
-        mouse::mouse_up(button).map_err(LuaError::from)
-    }
-
-    fn mouse_scroll(&self, delta: i32) -> std::result::Result<(), LuaError> {
-        mouse::mouse_scroll(delta).map_err(LuaError::from)
-    }
-}
-
 fn keyboard_devices() -> Result<Vec<(PathBuf, Device)>> {
     let devices = evdev::enumerate()
         .filter(|(_, device)| is_keyboard(device))
@@ -171,7 +147,10 @@ fn keyboard_devices() -> Result<Vec<(PathBuf, Device)>> {
 }
 
 fn is_keyboard(device: &Device) -> bool {
-    if device.name() == Some(VIRTUAL_DEVICE_NAME) {
+    if device
+        .name()
+        .is_some_and(|name| name.starts_with("reflex-keypress"))
+    {
         return false;
     }
 
@@ -236,18 +215,37 @@ fn handle_key_event(
         if value == 1 {
             pressed.insert(code);
             let pressed_set = pressed.iter().copied().collect::<BTreeSet<_>>();
-            let matched = state
+            let mut matched = BTreeMap::<String, (u64, ClientId)>::new();
+            for binding in state
                 .bindings
                 .iter()
                 .filter(|binding| binding.keys.is_subset(&pressed_set))
-                .map(|binding| binding.original.clone())
-                .collect::<Vec<_>>();
-            state.pending_bindings.extend(matched);
+            {
+                let entry = matched
+                    .entry(binding.original.clone())
+                    .or_insert((binding.order, binding.client_id));
+                if binding.order >= entry.0 {
+                    *entry = (binding.order, binding.client_id);
+                }
+            }
+            for (combo, (_, client_id)) in matched {
+                state
+                    .pending_bindings
+                    .entry(client_id)
+                    .or_default()
+                    .push_back(combo);
+            }
         } else if value == 0 {
             pressed.remove(&code);
         }
 
-        state.remaps.get(&code).copied().unwrap_or(code)
+        state
+            .remaps
+            .iter()
+            .filter(|remap| remap.from == code)
+            .max_by_key(|remap| remap.order)
+            .map(|remap| remap.to)
+            .unwrap_or(code)
     };
 
     let mapped = InputEvent::new(EventType::KEY, target, value);

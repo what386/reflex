@@ -1,6 +1,6 @@
-use crate::host::MouseMoveMode;
 use crate::inputs::error::{KeypressError, Result};
 use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType, uinput::VirtualDevice};
+use reflex_core::MouseMoveMode;
 use std::sync::{Mutex, OnceLock};
 
 const MOUSE_NAME: &str = "reflex-keypress-mouse";
