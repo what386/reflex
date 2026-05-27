@@ -1,7 +1,7 @@
 mod error;
 mod keyboard;
-mod table;
 mod mouse;
+mod table;
 
 #[cfg(target_os = "linux")]
 mod linux;

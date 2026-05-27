@@ -1,8 +1,8 @@
 use crate::host::{InputController, MouseMoveMode, Remapper};
 use crate::inputs::error::{KeypressError, Result};
 use crate::inputs::keyboard;
-use crate::inputs::keytable::parse_combo;
 use crate::inputs::mouse;
+use crate::inputs::table::parse_combo;
 use crate::lua::LuaError;
 use evdev::{AttributeSet, Device, EventType, InputEvent, Key, uinput::VirtualDevice};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
