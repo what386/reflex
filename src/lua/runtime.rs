@@ -1,70 +1,26 @@
-use crate::lua::api::{emit_signal, register_api};
+use crate::components::signal::{self, SignalState};
+use crate::components::timer::TimerState;
+use crate::lua::api::register_api;
 use crate::lua::errors::{ErrorKind, LuaError};
 use crate::lua::sandbox::configure_sandbox;
 use crate::lua::types::RuntimeConfig;
-use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataMethods, Value};
+use mlua::{Function, Lua, LuaOptions, StdLib, Value};
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::ffi::c_void;
 use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-#[derive(Clone)]
-pub(crate) struct CallbackEntry {
-    pub ptr: *const c_void,
-    pub callback: Function,
-}
-
-pub(crate) struct RegisteredTimer {
-    interval: Duration,
-    next_fire: Instant,
-    callback: Function,
-    repeating: bool,
-    active: bool,
-}
-
 pub(crate) struct RuntimeState {
     pub cfg: RuntimeConfig,
-    pub signals: HashMap<String, Vec<CallbackEntry>>,
+    pub signals: SignalState,
     pub bindings: Vec<(String, Function)>,
-    pub timers: HashMap<u64, RegisteredTimer>,
+    pub timers: TimerState,
     pub should_exit: bool,
-    next_timer_id: u64,
 }
 
 impl RuntimeState {
-    pub(crate) fn host(&self) -> crate::platform::Host {
+    pub(crate) fn host(&self) -> crate::host::Host {
         self.cfg.host.clone()
-    }
-
-    pub(crate) fn add_timer(
-        &mut self,
-        ms: u64,
-        callback: Function,
-        repeating: bool,
-        active: bool,
-    ) -> mlua::Result<u64> {
-        if ms == 0 {
-            return Err(mlua::Error::external(LuaError::new(
-                ErrorKind::Runtime,
-                "timer interval must be greater than 0 ms",
-            )));
-        }
-        let id = self.next_timer_id;
-        self.next_timer_id += 1;
-        let interval = Duration::from_millis(ms);
-        self.timers.insert(
-            id,
-            RegisteredTimer {
-                interval,
-                next_fire: Instant::now() + interval,
-                callback,
-                repeating,
-                active,
-            },
-        );
-        Ok(id)
     }
 }
 
@@ -79,11 +35,10 @@ impl Runtime {
             .map_err(lua_err)?;
         let state = Rc::new(RefCell::new(RuntimeState {
             cfg,
-            signals: HashMap::new(),
+            signals: SignalState::default(),
             bindings: Vec::new(),
-            timers: HashMap::new(),
+            timers: TimerState::default(),
             should_exit: false,
-            next_timer_id: 1,
         }));
         register_api(&lua, state.clone())?;
         configure_sandbox(&lua)?;
@@ -106,12 +61,13 @@ impl Runtime {
     }
 
     pub fn emit_with_args(&self, name: &str, args: Vec<Value>) -> Result<(), LuaError> {
-        emit_signal(&self.state, name, args).map_err(lua_err)
+        signal::emit(&self.state, name, args).map_err(lua_err)
     }
 
     pub fn run_loop(&self) -> Result<(), LuaError> {
         self.emit("reflex::started")?;
         while !self.should_exit() {
+            self.poll_bindings()?;
             self.poll_timers()?;
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -127,73 +83,35 @@ impl Runtime {
     }
 
     pub fn poll_timers(&self) -> Result<(), LuaError> {
-        let now = Instant::now();
-        let ready = {
-            let state = self.state.borrow();
-            state
-                .timers
-                .iter()
-                .filter_map(|(id, timer)| (timer.active && timer.next_fire <= now).then_some(*id))
-                .collect::<Vec<_>>()
-        };
-
-        for id in ready {
-            let callback = {
-                let mut state = self.state.borrow_mut();
-                let Some(timer) = state.timers.get_mut(&id) else {
-                    continue;
-                };
-                let callback = timer.callback.clone();
-                if timer.repeating {
-                    timer.next_fire = now + timer.interval;
-                } else {
-                    state.timers.remove(&id);
-                }
-                callback
-            };
+        let callbacks = self.state.borrow_mut().timers.fire_ready(Instant::now());
+        for callback in callbacks {
             callback.call::<()>(()).map_err(lua_err)?;
+        }
+        Ok(())
+    }
+
+    pub fn poll_bindings(&self) -> Result<(), LuaError> {
+        let host = self.state.borrow().host();
+        for combo in host.remapping.drain_bind_events()? {
+            let callbacks = {
+                let state = self.state.borrow();
+                state
+                    .bindings
+                    .iter()
+                    .filter(|(registered, _)| registered == &combo)
+                    .map(|(_, callback)| callback.clone())
+                    .collect::<Vec<_>>()
+            };
+
+            for callback in callbacks {
+                callback.call::<()>(()).map_err(lua_err)?;
+            }
         }
         Ok(())
     }
 
     pub fn lua(&self) -> &Lua {
         &self.lua
-    }
-}
-
-pub(crate) struct TimerEntry {
-    pub id: u64,
-    pub state: Rc<RefCell<RuntimeState>>,
-}
-
-impl UserData for TimerEntry {
-    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("start", |_, this, ()| {
-            let mut state = this.state.borrow_mut();
-            if let Some(timer) = state.timers.get_mut(&this.id) {
-                timer.active = true;
-                timer.next_fire = Instant::now() + timer.interval;
-            }
-            Ok(())
-        });
-        methods.add_method("pause", |_, this, ()| {
-            if let Some(timer) = this.state.borrow_mut().timers.get_mut(&this.id) {
-                timer.active = false;
-            }
-            Ok(())
-        });
-        methods.add_method("resume", |_, this, ()| {
-            let mut state = this.state.borrow_mut();
-            if let Some(timer) = state.timers.get_mut(&this.id) {
-                timer.active = true;
-                timer.next_fire = Instant::now() + timer.interval;
-            }
-            Ok(())
-        });
-        methods.add_method("clear", |_, this, ()| {
-            this.state.borrow_mut().timers.remove(&this.id);
-            Ok(())
-        });
     }
 }
 

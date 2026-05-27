@@ -2,6 +2,7 @@ pub mod api;
 pub mod errors;
 pub mod runtime;
 pub mod sandbox;
+pub mod stdlib;
 pub mod types;
 
 pub use errors::{ErrorKind, LuaError};

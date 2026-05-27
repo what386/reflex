@@ -1,9 +1,10 @@
+use crate::components::{signal, timer};
 use crate::lua::errors::{ErrorKind, LuaError};
-use crate::lua::runtime::{CallbackEntry, RuntimeState, TimerEntry};
+use crate::lua::runtime::RuntimeState;
+use crate::lua::stdlib;
 use crate::lua::types::MouseMoveMode;
 use mlua::{Function, Lua, Table, Value, Variadic};
 use std::cell::RefCell;
-use std::ptr;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -14,12 +15,12 @@ pub(crate) fn register_api(lua: &Lua, state: Rc<RefCell<RuntimeState>>) -> Resul
         .map_err(lua_err)?;
 
     register_root(lua, &reflex, state.clone())?;
-    register_signal(lua, &reflex, state.clone())?;
+    signal::register_lua(lua, &reflex, state.clone())?;
     register_key(lua, &reflex, state.clone())?;
     register_mouse(lua, &reflex, state.clone())?;
-    register_timer(lua, &reflex, state.clone())?;
+    timer::register_lua(lua, &reflex, state.clone())?;
     register_process(lua, &reflex, state)?;
-    register_stdlib(lua)?;
+    stdlib::register(lua)?;
     Ok(())
 }
 
@@ -82,58 +83,6 @@ fn register_root(
             .map_err(lua_err)?,
         )
         .map_err(lua_err)
-}
-
-fn register_signal(
-    lua: &Lua,
-    reflex: &Table,
-    state: Rc<RefCell<RuntimeState>>,
-) -> Result<(), LuaError> {
-    let signal = lua.create_table().map_err(lua_err)?;
-    let st = state.clone();
-    signal
-        .set(
-            "connect",
-            lua.create_function(move |_, (name, callback): (String, Function)| {
-                let ptr = callback.to_pointer();
-                st.borrow_mut()
-                    .signals
-                    .entry(name)
-                    .or_default()
-                    .push(CallbackEntry { ptr, callback });
-                Ok(())
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-
-    let st = state.clone();
-    signal
-        .set(
-            "disconnect",
-            lua.create_function(move |_, (name, callback): (String, Function)| {
-                let target = callback.to_pointer();
-                if let Some(callbacks) = st.borrow_mut().signals.get_mut(&name) {
-                    callbacks.retain(|entry| !ptr::eq(entry.ptr, target));
-                }
-                Ok(())
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-
-    let st = state;
-    signal
-        .set(
-            "emit",
-            lua.create_function(move |_, (name, args): (String, Variadic<Value>)| {
-                emit_signal(&st, &name, args.into_iter().collect())
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-
-    reflex.set("signal", signal).map_err(lua_err)
 }
 
 fn register_key(
@@ -290,41 +239,6 @@ fn register_mouse(
     reflex.set("mouse", mouse).map_err(lua_err)
 }
 
-fn register_timer(
-    lua: &Lua,
-    reflex: &Table,
-    state: Rc<RefCell<RuntimeState>>,
-) -> Result<(), LuaError> {
-    let timer = lua.create_table().map_err(lua_err)?;
-    let st = state.clone();
-    timer
-        .set(
-            "once",
-            lua.create_function(move |_, (ms, callback): (u64, Function)| {
-                st.borrow_mut().add_timer(ms, callback, false, true)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-
-    let st = state;
-    timer
-        .set(
-            "new",
-            lua.create_function(move |lua, (ms, callback): (u64, Function)| {
-                let id = st.borrow_mut().add_timer(ms, callback, true, false)?;
-                lua.create_userdata(TimerEntry {
-                    id,
-                    state: st.clone(),
-                })
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-
-    reflex.set("timer", timer).map_err(lua_err)
-}
-
 fn register_process(
     lua: &Lua,
     reflex: &Table,
@@ -399,35 +313,6 @@ fn register_process(
         )
         .map_err(lua_err)?;
     reflex.set("process", process).map_err(lua_err)
-}
-
-fn register_stdlib(lua: &Lua) -> Result<(), LuaError> {
-    for (name, script) in [
-        ("table.lua", include_str!("stdlib/table.lua")),
-        ("str.lua", include_str!("stdlib/str.lua")),
-    ] {
-        lua.load(script).set_name(name).exec().map_err(lua_err)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn emit_signal(
-    state: &Rc<RefCell<RuntimeState>>,
-    name: &str,
-    args: Vec<Value>,
-) -> mlua::Result<()> {
-    let callbacks = state
-        .borrow()
-        .signals
-        .get(name)
-        .cloned()
-        .unwrap_or_default();
-    for entry in callbacks {
-        entry
-            .callback
-            .call::<()>(mlua::MultiValue::from_vec(args.clone()))?;
-    }
-    Ok(())
 }
 
 fn option_u32(_: &Lua, value: Option<u32>) -> mlua::Result<Value> {

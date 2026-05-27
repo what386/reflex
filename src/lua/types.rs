@@ -1,6 +1,6 @@
-use crate::platform::{Host, default_host};
+use crate::host::{Host, default_host};
 
-pub use crate::platform::{
+pub use crate::host::{
     Host as ReflexHost, InputController, MouseMoveMode, ProcessController, Remapper,
 };
 
