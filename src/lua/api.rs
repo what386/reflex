@@ -1,5 +1,5 @@
 use crate::lua::errors::{ErrorKind, LuaError};
-use crate::lua::runtime::{CallbackEntry, RuntimeState, TimerEntry, WindowObject};
+use crate::lua::runtime::{CallbackEntry, RuntimeState, TimerEntry};
 use crate::lua::types::MouseMoveMode;
 use mlua::{Function, Lua, Table, Value, Variadic};
 use std::cell::RefCell;
@@ -17,8 +17,6 @@ pub(crate) fn register_api(lua: &Lua, state: Rc<RefCell<RuntimeState>>) -> Resul
     register_signal(lua, &reflex, state.clone())?;
     register_key(lua, &reflex, state.clone())?;
     register_mouse(lua, &reflex, state.clone())?;
-    register_window(lua, &reflex, state.clone())?;
-    register_clipboard(lua, &reflex, state.clone())?;
     register_timer(lua, &reflex, state.clone())?;
     register_process(lua, &reflex, state)?;
     register_stdlib(lua)?;
@@ -37,25 +35,10 @@ fn register_root(
             lua.create_function(move |_, (combo, callback): (String, Function)| {
                 st.borrow()
                     .host()
+                    .remapping
                     .register_bind(&combo)
                     .map_err(mlua::Error::external)?;
                 st.borrow_mut().bindings.push((combo, callback));
-                Ok(())
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-
-    let st = state.clone();
-    reflex
-        .set(
-            "bindstring",
-            lua.create_function(move |_, (text, callback): (String, Function)| {
-                st.borrow()
-                    .host()
-                    .register_bindstring(&text)
-                    .map_err(mlua::Error::external)?;
-                st.borrow_mut().bindstrings.push((text, callback));
                 Ok(())
             })
             .map_err(lua_err)?,
@@ -69,21 +52,8 @@ fn register_root(
             lua.create_function(move |_, (from, to): (String, String)| {
                 st.borrow()
                     .host()
-                    .register_hotkey(&from, &to)
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-
-    let st = state.clone();
-    reflex
-        .set(
-            "hotstring",
-            lua.create_function(move |_, (from, to): (String, String)| {
-                st.borrow()
-                    .host()
-                    .register_hotstring(&from, &to)
+                    .remapping
+                    .remap_key(&from, &to)
                     .map_err(mlua::Error::external)
             })
             .map_err(lua_err)?,
@@ -104,12 +74,10 @@ fn register_root(
     let st = state;
     reflex
         .set(
-            "msgbox",
-            lua.create_function(move |_, message: String| {
-                st.borrow()
-                    .host()
-                    .msgbox(&message)
-                    .map_err(mlua::Error::external)
+            "exit",
+            lua.create_function(move |_, ()| {
+                st.borrow_mut().should_exit = true;
+                Ok(())
             })
             .map_err(lua_err)?,
         )
@@ -159,7 +127,7 @@ fn register_signal(
         .set(
             "emit",
             lua.create_function(move |_, (name, args): (String, Variadic<Value>)| {
-                emit_signal(&mut st.borrow_mut(), &name, args.into_iter().collect())
+                emit_signal(&st, &name, args.into_iter().collect())
             })
             .map_err(lua_err)?,
         )
@@ -176,10 +144,11 @@ fn register_key(
     let key = lua.create_table().map_err(lua_err)?;
     let st = state.clone();
     key.set(
-        "send",
+        "type",
         lua.create_function(move |_, text: String| {
             st.borrow()
                 .host()
+                .input
                 .key_send(&text)
                 .map_err(mlua::Error::external)
         })
@@ -188,10 +157,11 @@ fn register_key(
     .map_err(lua_err)?;
     let st = state.clone();
     key.set(
-        "tap",
+        "send",
         lua.create_function(move |_, combo: String| {
             st.borrow()
                 .host()
+                .input
                 .key_tap(&combo)
                 .map_err(mlua::Error::external)
         })
@@ -204,6 +174,7 @@ fn register_key(
         lua.create_function(move |_, name: String| {
             st.borrow()
                 .host()
+                .input
                 .key_down(&name)
                 .map_err(mlua::Error::external)
         })
@@ -216,6 +187,7 @@ fn register_key(
         lua.create_function(move |_, name: String| {
             st.borrow()
                 .host()
+                .input
                 .key_up(&name)
                 .map_err(mlua::Error::external)
         })
@@ -248,6 +220,7 @@ fn register_mouse(
                 };
                 st.borrow()
                     .host()
+                    .input
                     .mouse_move(x, y, mode)
                     .map_err(mlua::Error::external)
             })
@@ -263,6 +236,7 @@ fn register_mouse(
                 move |_, (button, x, y): (String, Option<i32>, Option<i32>)| {
                     st.borrow()
                         .host()
+                        .input
                         .mouse_click(&button, x, y)
                         .map_err(mlua::Error::external)
                 },
@@ -278,6 +252,7 @@ fn register_mouse(
             lua.create_function(move |_, button: String| {
                 st.borrow()
                     .host()
+                    .input
                     .mouse_down(&button)
                     .map_err(mlua::Error::external)
             })
@@ -291,6 +266,7 @@ fn register_mouse(
             lua.create_function(move |_, button: String| {
                 st.borrow()
                     .host()
+                    .input
                     .mouse_up(&button)
                     .map_err(mlua::Error::external)
             })
@@ -304,6 +280,7 @@ fn register_mouse(
             lua.create_function(move |_, delta: i32| {
                 st.borrow()
                     .host()
+                    .input
                     .mouse_scroll(delta)
                     .map_err(mlua::Error::external)
             })
@@ -311,207 +288,6 @@ fn register_mouse(
         )
         .map_err(lua_err)?;
     reflex.set("mouse", mouse).map_err(lua_err)
-}
-
-fn register_window(
-    lua: &Lua,
-    reflex: &Table,
-    state: Rc<RefCell<RuntimeState>>,
-) -> Result<(), LuaError> {
-    let window = lua.create_table().map_err(lua_err)?;
-    let st = state.clone();
-    window
-        .set(
-            "find",
-            lua.create_function(move |lua, pattern: String| {
-                match st
-                    .borrow()
-                    .host()
-                    .window_find(&pattern)
-                    .map_err(mlua::Error::external)?
-                {
-                    Some(handle) => Ok(Value::UserData(lua.create_userdata(WindowObject {
-                        host: st.borrow().host(),
-                        handle,
-                    })?)),
-                    None => Ok(Value::Nil),
-                }
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-
-    let st = state.clone();
-    window
-        .set(
-            "focus",
-            lua.create_function(move |_, pattern: String| {
-                st.borrow()
-                    .host()
-                    .window_focus(&pattern)
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    let st = state.clone();
-    window
-        .set(
-            "close",
-            lua.create_function(move |_, pattern: String| {
-                st.borrow()
-                    .host()
-                    .window_close(&pattern)
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    let st = state.clone();
-    window
-        .set(
-            "minimize",
-            lua.create_function(move |_, pattern: String| {
-                st.borrow()
-                    .host()
-                    .window_minimize(&pattern)
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    let st = state.clone();
-    window
-        .set(
-            "maximize",
-            lua.create_function(move |_, pattern: String| {
-                st.borrow()
-                    .host()
-                    .window_maximize(&pattern)
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    let st = state.clone();
-    window
-        .set(
-            "exists",
-            lua.create_function(move |_, pattern: String| {
-                st.borrow()
-                    .host()
-                    .window_exists(&pattern)
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    let st = state.clone();
-    window
-        .set(
-            "is_focused",
-            lua.create_function(move |_, pattern: String| {
-                st.borrow()
-                    .host()
-                    .window_is_focused(&pattern)
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    let st = state.clone();
-    window
-        .set(
-            "focused",
-            lua.create_function(move |lua, ()| {
-                option_string(
-                    lua,
-                    st.borrow()
-                        .host()
-                        .window_focused()
-                        .map_err(mlua::Error::external)?,
-                )
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    let st = state;
-    window
-        .set(
-            "wait",
-            lua.create_function(move |lua, (pattern, timeout): (String, Option<f64>)| {
-                let deadline = timeout
-                    .map(|secs| std::time::Instant::now() + Duration::from_secs_f64(secs.max(0.0)));
-                loop {
-                    if let Some(handle) = st
-                        .borrow()
-                        .host()
-                        .window_find(&pattern)
-                        .map_err(mlua::Error::external)?
-                    {
-                        return Ok(Value::UserData(lua.create_userdata(WindowObject {
-                            host: st.borrow().host(),
-                            handle,
-                        })?));
-                    }
-                    if deadline.is_none_or(|deadline| std::time::Instant::now() >= deadline) {
-                        return Ok(Value::Nil);
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    reflex.set("window", window).map_err(lua_err)
-}
-
-fn register_clipboard(
-    lua: &Lua,
-    reflex: &Table,
-    state: Rc<RefCell<RuntimeState>>,
-) -> Result<(), LuaError> {
-    let clipboard = lua.create_table().map_err(lua_err)?;
-    let st = state.clone();
-    clipboard
-        .set(
-            "get",
-            lua.create_function(move |_, ()| {
-                st.borrow()
-                    .host()
-                    .clipboard_get()
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    let st = state.clone();
-    clipboard
-        .set(
-            "set",
-            lua.create_function(move |_, text: String| {
-                st.borrow()
-                    .host()
-                    .clipboard_set(&text)
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    let st = state;
-    clipboard
-        .set(
-            "clear",
-            lua.create_function(move |_, ()| {
-                st.borrow()
-                    .host()
-                    .clipboard_clear()
-                    .map_err(mlua::Error::external)
-            })
-            .map_err(lua_err)?,
-        )
-        .map_err(lua_err)?;
-    reflex.set("clipboard", clipboard).map_err(lua_err)
 }
 
 fn register_timer(
@@ -569,7 +345,8 @@ fn register_process(
                 };
                 st.borrow()
                     .host()
-                    .process_spawn(program, rest)
+                    .process
+                    .spawn(program, rest)
                     .map_err(mlua::Error::external)
             })
             .map_err(lua_err)?,
@@ -585,7 +362,8 @@ fn register_process(
                     lua,
                     st.borrow()
                         .host()
-                        .process_find(&name)
+                        .process
+                        .find(&name)
                         .map_err(mlua::Error::external)?,
                 )
             })
@@ -599,7 +377,8 @@ fn register_process(
             lua.create_function(move |_, pid: u32| {
                 st.borrow()
                     .host()
-                    .process_kill(pid)
+                    .process
+                    .kill(pid)
                     .map_err(mlua::Error::external)
             })
             .map_err(lua_err)?,
@@ -612,7 +391,8 @@ fn register_process(
             lua.create_function(move |_, name: String| {
                 st.borrow()
                     .host()
-                    .process_pkill(&name)
+                    .process
+                    .pkill(&name)
                     .map_err(mlua::Error::external)
             })
             .map_err(lua_err)?,
@@ -625,7 +405,6 @@ fn register_stdlib(lua: &Lua) -> Result<(), LuaError> {
     for (name, script) in [
         ("table.lua", include_str!("stdlib/table.lua")),
         ("str.lua", include_str!("stdlib/str.lua")),
-        ("path.lua", include_str!("stdlib/path.lua")),
     ] {
         lua.load(script).set_name(name).exec().map_err(lua_err)?;
     }
@@ -633,24 +412,22 @@ fn register_stdlib(lua: &Lua) -> Result<(), LuaError> {
 }
 
 pub(crate) fn emit_signal(
-    state: &mut RuntimeState,
+    state: &Rc<RefCell<RuntimeState>>,
     name: &str,
     args: Vec<Value>,
 ) -> mlua::Result<()> {
-    let callbacks = state.signals.get(name).cloned().unwrap_or_default();
+    let callbacks = state
+        .borrow()
+        .signals
+        .get(name)
+        .cloned()
+        .unwrap_or_default();
     for entry in callbacks {
         entry
             .callback
             .call::<()>(mlua::MultiValue::from_vec(args.clone()))?;
     }
     Ok(())
-}
-
-fn option_string(lua: &Lua, value: Option<String>) -> mlua::Result<Value> {
-    match value {
-        Some(value) => Ok(Value::String(lua.create_string(value)?)),
-        None => Ok(Value::Nil),
-    }
 }
 
 fn option_u32(_: &Lua, value: Option<u32>) -> mlua::Result<Value> {

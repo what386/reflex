@@ -6,4 +6,4 @@ pub mod types;
 
 pub use errors::{ErrorKind, LuaError};
 pub use runtime::Runtime;
-pub use types::{MouseMoveMode, ReflexHost, RuntimeConfig, UnsupportedHost, WindowHandle};
+pub use types::{MouseMoveMode, ReflexHost, RuntimeConfig};

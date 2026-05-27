@@ -1,14 +1,13 @@
 use crate::lua::api::{emit_signal, register_api};
 use crate::lua::errors::{ErrorKind, LuaError};
 use crate::lua::sandbox::configure_sandbox;
-use crate::lua::types::{ReflexHost, RuntimeConfig, WindowHandle};
+use crate::lua::types::RuntimeConfig;
 use mlua::{Function, Lua, LuaOptions, StdLib, UserData, UserDataMethods, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[derive(Clone)]
@@ -29,13 +28,13 @@ pub(crate) struct RuntimeState {
     pub cfg: RuntimeConfig,
     pub signals: HashMap<String, Vec<CallbackEntry>>,
     pub bindings: Vec<(String, Function)>,
-    pub bindstrings: Vec<(String, Function)>,
     pub timers: HashMap<u64, RegisteredTimer>,
+    pub should_exit: bool,
     next_timer_id: u64,
 }
 
 impl RuntimeState {
-    pub(crate) fn host(&self) -> Arc<dyn ReflexHost> {
+    pub(crate) fn host(&self) -> crate::platform::Host {
         self.cfg.host.clone()
     }
 
@@ -82,8 +81,8 @@ impl Runtime {
             cfg,
             signals: HashMap::new(),
             bindings: Vec::new(),
-            bindstrings: Vec::new(),
             timers: HashMap::new(),
+            should_exit: false,
             next_timer_id: 1,
         }));
         register_api(&lua, state.clone())?;
@@ -107,7 +106,24 @@ impl Runtime {
     }
 
     pub fn emit_with_args(&self, name: &str, args: Vec<Value>) -> Result<(), LuaError> {
-        emit_signal(&mut self.state.borrow_mut(), name, args).map_err(lua_err)
+        emit_signal(&self.state, name, args).map_err(lua_err)
+    }
+
+    pub fn run_loop(&self) -> Result<(), LuaError> {
+        self.emit("reflex::started")?;
+        while !self.should_exit() {
+            self.poll_timers()?;
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.emit("reflex::exiting")
+    }
+
+    pub fn request_exit(&self) {
+        self.state.borrow_mut().should_exit = true;
+    }
+
+    pub fn should_exit(&self) -> bool {
+        self.state.borrow().should_exit
     }
 
     pub fn poll_timers(&self) -> Result<(), LuaError> {
@@ -142,60 +158,6 @@ impl Runtime {
 
     pub fn lua(&self) -> &Lua {
         &self.lua
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct WindowObject {
-    pub host: Arc<dyn ReflexHost>,
-    pub handle: WindowHandle,
-}
-
-impl UserData for WindowObject {
-    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("focus", |_, this, ()| {
-            this.host
-                .window_focus(&this.handle.title)
-                .map_err(mlua::Error::external)
-        });
-        methods.add_method("minimize", |_, this, ()| {
-            this.host
-                .window_minimize(&this.handle.title)
-                .map_err(mlua::Error::external)
-        });
-        methods.add_method("maximize", |_, this, ()| {
-            this.host
-                .window_maximize(&this.handle.title)
-                .map_err(mlua::Error::external)
-        });
-        methods.add_method("restore", |_, this, ()| {
-            this.host
-                .window_restore(&this.handle)
-                .map_err(mlua::Error::external)
-        });
-        methods.add_method("close", |_, this, ()| {
-            this.host
-                .window_close(&this.handle.title)
-                .map_err(mlua::Error::external)
-        });
-        methods.add_method(
-            "move",
-            |_, this, (x, y, width, height): (i32, i32, i32, i32)| {
-                this.host
-                    .window_move(&this.handle, x, y, width, height)
-                    .map_err(mlua::Error::external)
-            },
-        );
-        methods.add_method("title", |_, this, ()| {
-            this.host
-                .window_title(&this.handle)
-                .map_err(mlua::Error::external)
-        });
-        methods.add_method("exists", |_, this, ()| {
-            this.host
-                .window_handle_exists(&this.handle)
-                .map_err(mlua::Error::external)
-        });
     }
 }
 
