@@ -16,7 +16,7 @@ test:
 
 
 run *args:
-    cargo run --bin "reflex" -- {{args}}
+    sudo cargo run --bin "reflex" -- {{args}}
 
 prepare version:
     lash run scripts/release/prepare.lash {{version}}
