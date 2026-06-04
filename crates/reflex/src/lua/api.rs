@@ -1,4 +1,4 @@
-use crate::components::{signal, timer};
+use crate::lua::components::{signal, timer};
 use crate::lua::errors::{ErrorKind, LuaError};
 use crate::lua::runtime::RuntimeState;
 use crate::lua::stdlib;

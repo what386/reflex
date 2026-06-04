@@ -15,8 +15,11 @@ test:
     cargo xwin test run --all --target x86_64-pc-windows-msvc
 
 
+start-daemon *args:
+    sudo cargo run --bin "reflexd" -- {{args}}
+
 run *args:
-    sudo cargo run --bin "reflex" -- {{args}}
+    cargo run --bin "reflex" -- {{args}}
 
 prepare version:
     lash run scripts/release/prepare.lash {{version}}

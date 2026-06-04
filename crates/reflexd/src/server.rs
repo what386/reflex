@@ -21,6 +21,11 @@ pub fn run(path: PathBuf) -> Result<(), String> {
         fs::remove_file(&path).map_err(|err| err.to_string())?;
     }
     let listener = UnixListener::bind(&path).map_err(|err| err.to_string())?;
+    std::fs::set_permissions(
+        &path,
+        std::os::unix::fs::PermissionsExt::from_mode(0o666),
+    ).expect("reflexd: failed to set permissions");
+
     eprintln!("reflexd: listening at {}", path.display());
 
     let input = Arc::new(LinuxKeypress::new());

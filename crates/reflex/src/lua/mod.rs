@@ -4,6 +4,7 @@ pub mod runtime;
 pub mod sandbox;
 pub mod stdlib;
 pub mod types;
+pub mod components;
 
 pub use errors::{ErrorKind, LuaError};
 pub use runtime::Runtime;
