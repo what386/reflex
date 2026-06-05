@@ -8,9 +8,6 @@
 - [ ] feat: bring back hotstrings somehow..
       @created 2026-05-24 19:02
 
-- [ ] fuller window support?
-      @created 2026-05-25 02:19
-
 - [ ] message box
       @created 2026-05-25 02:19
 
