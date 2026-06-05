@@ -14,6 +14,9 @@
 - [ ] message box
       @created 2026-05-25 02:19
 
+- [ ] todo: consider windows support, e.g. sysinfo instead of /proc
+      @created 2026-06-05 19:46
+
 
 ## Completed
 
