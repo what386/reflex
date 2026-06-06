@@ -2,7 +2,7 @@
 
 Reflex scripts are plain Lua files. The `reflex` global is available everywhere; no imports are needed.
 
-Input handling is owned by `reflexd`. Start `reflexd` first, then run one or more scripts with `reflex script.lua`. Each script registers its own rules with the daemon; when a script exits, its rules are removed.
+Input handling is owned by `reflexd`. Start `reflexd` first, then run one or more scripts with `reflex script.lua`. Each script registers its own rules with the daemon; when a script exits, its rules are removed. A sample systemd unit is available at `crates/reflexd/reflexd.service`; it assumes `reflexd` is installed at `/usr/local/bin/reflexd`.
 
 ## reflex.signal
 
