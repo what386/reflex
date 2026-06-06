@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ScriptInfo {
+    pub id: u64,
+    pub pid: u32,
+    pub script_path: String,
+    pub started_at: u64,
+    pub stop_requested: bool,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireMouseMoveMode {
@@ -11,6 +20,14 @@ pub enum WireMouseMoveMode {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
     Hello,
+    RegisterScript {
+        pid: u32,
+        script_path: String,
+    },
+    ListScripts,
+    StopScript {
+        target: String,
+    },
     RegisterBind {
         combo: String,
     },
@@ -55,8 +72,24 @@ pub enum Request {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
-    Hello { version: u32 },
+    Hello {
+        version: u32,
+    },
     Ok,
-    BindEvents { events: Vec<String> },
-    Error { message: String },
+    ScriptRegistered {
+        id: u64,
+    },
+    Scripts {
+        scripts: Vec<ScriptInfo>,
+    },
+    ScriptStopped {
+        script: ScriptInfo,
+    },
+    BindEvents {
+        events: Vec<String>,
+        stop_requested: bool,
+    },
+    Error {
+        message: String,
+    },
 }

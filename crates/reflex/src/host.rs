@@ -9,6 +9,12 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BindingPoll {
+    pub events: Vec<String>,
+    pub stop_requested: bool,
+}
+
 #[derive(Clone)]
 pub struct Host {
     pub name: &'static str,
@@ -23,8 +29,8 @@ pub trait Remapper: Send + Sync {
     fn name(&self) -> &'static str;
     fn register_bind(&self, combo: &str) -> Result<(), LuaError>;
     fn remap_key(&self, from: &str, to: &str) -> Result<(), LuaError>;
-    fn drain_bind_events(&self) -> Result<Vec<String>, LuaError> {
-        Ok(Vec::new())
+    fn drain_bind_events(&self) -> Result<BindingPoll, LuaError> {
+        Ok(BindingPoll::default())
     }
 }
 
@@ -86,16 +92,32 @@ pub fn unsupported_host() -> Host {
     host("unsupported")
 }
 
+pub fn check_host() -> Host {
+    let check = Arc::new(CheckController);
+    Host {
+        name: "check",
+        remapping: check.clone(),
+        input: check.clone(),
+        process: check.clone(),
+        clipboard: check.clone(),
+        notifications: check,
+    }
+}
+
 pub fn daemon_host() -> Result<Host, LuaError> {
     let daemon = Arc::new(crate::daemon::client::DaemonHost::connect_default()?);
-    Ok(Host {
+    Ok(daemon_host_from(daemon))
+}
+
+pub fn daemon_host_from(daemon: Arc<crate::daemon::client::DaemonHost>) -> Host {
+    Host {
         name: "reflexd",
         remapping: daemon.clone(),
         input: daemon.clone(),
         process: Arc::new(LocalProcessController),
         clipboard: Arc::new(CommandClipboard),
         notifications: Arc::new(DesktopNotificationController),
-    })
+    }
 }
 
 fn host(name: &'static str) -> Host {
@@ -113,6 +135,8 @@ fn host(name: &'static str) -> Host {
 struct UnsupportedController {
     host: &'static str,
 }
+
+struct CheckController;
 
 impl UnsupportedController {
     fn unsupported(&self, operation: &str) -> LuaError {
@@ -195,6 +219,112 @@ impl ProcessController for UnsupportedController {
 
     fn pkill(&self, _: &str) -> Result<u32, LuaError> {
         Err(self.unsupported("reflex.process.pkill"))
+    }
+}
+
+impl Remapper for CheckController {
+    fn name(&self) -> &'static str {
+        "check"
+    }
+
+    fn register_bind(&self, _: &str) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn remap_key(&self, _: &str, _: &str) -> Result<(), LuaError> {
+        Ok(())
+    }
+}
+
+impl InputController for CheckController {
+    fn name(&self) -> &'static str {
+        "check"
+    }
+
+    fn key_send(&self, _: &str) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn key_tap(&self, _: &str) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn key_down(&self, _: &str) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn key_up(&self, _: &str) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn mouse_move(&self, _: i32, _: i32, _: MouseMoveMode) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn mouse_click(&self, _: &str, _: Option<i32>, _: Option<i32>) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn mouse_down(&self, _: &str) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn mouse_up(&self, _: &str) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn mouse_scroll(&self, _: i32) -> Result<(), LuaError> {
+        Ok(())
+    }
+}
+
+impl ProcessController for CheckController {
+    fn name(&self) -> &'static str {
+        "check"
+    }
+
+    fn spawn(&self, _: &str, _: &[String]) -> Result<u32, LuaError> {
+        Ok(0)
+    }
+
+    fn find(&self, _: &str) -> Result<Option<u32>, LuaError> {
+        Ok(None)
+    }
+
+    fn kill(&self, _: u32) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn pkill(&self, _: &str) -> Result<u32, LuaError> {
+        Ok(0)
+    }
+}
+
+impl ClipboardController for CheckController {
+    fn name(&self) -> &'static str {
+        "check"
+    }
+
+    fn get(&self) -> Result<String, LuaError> {
+        Ok(String::new())
+    }
+
+    fn set(&self, _: &str) -> Result<(), LuaError> {
+        Ok(())
+    }
+
+    fn clear(&self) -> Result<(), LuaError> {
+        Ok(())
+    }
+}
+
+impl NotificationController for CheckController {
+    fn name(&self) -> &'static str {
+        "check"
+    }
+
+    fn notify(&self, _: &NotificationOptions) -> Result<(), LuaError> {
+        Ok(())
     }
 }
 
@@ -531,7 +661,8 @@ fn clipboard_err(message: impl Into<String>) -> LuaError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipboardBackend, ErrorKind, find_processes, process_arg_matches, select_clipboard_backend,
+        ClipboardBackend, ErrorKind, NotificationOptions, NotificationUrgency, check_host,
+        find_processes, process_arg_matches, select_clipboard_backend,
     };
 
     #[test]
@@ -575,5 +706,41 @@ mod tests {
         let err = find_processes(" ", "reflex.process.find").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Runtime);
         assert_eq!(err.msg, "reflex.process.find requires a process name");
+    }
+
+    #[test]
+    fn check_host_accepts_side_effecting_api_calls_without_running_them() {
+        let host = check_host();
+
+        host.remapping.register_bind("ctrl+t").unwrap();
+        host.remapping.remap_key("capslock", "ctrl").unwrap();
+        host.input.key_send("hello").unwrap();
+        host.input.key_tap("ctrl+c").unwrap();
+        host.input.key_down("shift").unwrap();
+        host.input.key_up("shift").unwrap();
+        host.input
+            .mouse_move(1, 2, crate::host::MouseMoveMode::Relative)
+            .unwrap();
+        host.input.mouse_click("left", None, None).unwrap();
+        host.input.mouse_down("left").unwrap();
+        host.input.mouse_up("left").unwrap();
+        host.input.mouse_scroll(1).unwrap();
+        assert_eq!(host.process.spawn("program", &[]).unwrap(), 0);
+        assert_eq!(host.process.find("program").unwrap(), None);
+        host.process.kill(1).unwrap();
+        assert_eq!(host.process.pkill("program").unwrap(), 0);
+        host.clipboard.set("text").unwrap();
+        assert_eq!(host.clipboard.get().unwrap(), "");
+        host.clipboard.clear().unwrap();
+        host.notifications
+            .notify(&NotificationOptions {
+                title: "title".to_string(),
+                body: Some("body".to_string()),
+                app_name: None,
+                icon: None,
+                urgency: NotificationUrgency::Normal,
+                timeout: None,
+            })
+            .unwrap();
     }
 }

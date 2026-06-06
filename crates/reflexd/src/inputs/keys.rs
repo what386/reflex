@@ -147,6 +147,7 @@ fn spec(name: &'static str, evdev: EvdevKey) -> KeySpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reflex_core::KEY_NAMES;
 
     #[test]
     fn parses_common_combo_names() {
@@ -185,5 +186,12 @@ mod tests {
     #[test]
     fn rejects_empty_combo() {
         assert!(parse_combo(" + ").is_err());
+    }
+
+    #[test]
+    fn shared_key_names_are_parseable() {
+        for name in KEY_NAMES {
+            parse_key(name).unwrap_or_else(|err| panic!("{name} should parse: {err}"));
+        }
     }
 }

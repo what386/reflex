@@ -1,6 +1,6 @@
-use crate::host::{InputController, MouseMoveMode, ProcessController, Remapper};
+use crate::host::{BindingPoll, InputController, MouseMoveMode, ProcessController, Remapper};
 use crate::lua::{ErrorKind, LuaError};
-use reflex_core::protocol::{Request, Response, WireMouseMoveMode};
+use reflex_core::protocol::{Request, Response, ScriptInfo, WireMouseMoveMode};
 use reflex_core::{SOCKET_ENV, default_socket_path};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -28,6 +28,27 @@ impl DaemonHost {
                 other => Err(host_err(format!("unexpected reflexd response: {other:?}"))),
             })?;
         Ok(host)
+    }
+
+    pub fn register_script(&self, pid: u32, script_path: String) -> Result<u64, LuaError> {
+        match self.call(Request::RegisterScript { pid, script_path })? {
+            Response::ScriptRegistered { id } => Ok(id),
+            other => Err(host_err(format!("unexpected reflexd response: {other:?}"))),
+        }
+    }
+
+    pub fn list_scripts(&self) -> Result<Vec<ScriptInfo>, LuaError> {
+        match self.call(Request::ListScripts)? {
+            Response::Scripts { scripts } => Ok(scripts),
+            other => Err(host_err(format!("unexpected reflexd response: {other:?}"))),
+        }
+    }
+
+    pub fn stop_script(&self, target: String) -> Result<ScriptInfo, LuaError> {
+        match self.call(Request::StopScript { target })? {
+            Response::ScriptStopped { script } => Ok(script),
+            other => Err(host_err(format!("unexpected reflexd response: {other:?}"))),
+        }
     }
 
     fn call(&self, request: Request) -> Result<Response, LuaError> {
@@ -64,9 +85,15 @@ impl Remapper for DaemonHost {
         })
     }
 
-    fn drain_bind_events(&self) -> Result<Vec<String>, LuaError> {
+    fn drain_bind_events(&self) -> Result<BindingPoll, LuaError> {
         match self.call(Request::DrainBindEvents)? {
-            Response::BindEvents { events } => Ok(events),
+            Response::BindEvents {
+                events,
+                stop_requested,
+            } => Ok(BindingPoll {
+                events,
+                stop_requested,
+            }),
             other => Err(host_err(format!("unexpected reflexd response: {other:?}"))),
         }
     }

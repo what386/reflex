@@ -92,7 +92,12 @@ impl Runtime {
 
     pub fn poll_bindings(&self) -> Result<(), LuaError> {
         let host = self.state.borrow().host();
-        for combo in host.remapping.drain_bind_events()? {
+        let poll = host.remapping.drain_bind_events()?;
+        if poll.stop_requested {
+            self.request_exit();
+        }
+
+        for combo in poll.events {
             let callbacks = {
                 let state = self.state.borrow();
                 state
