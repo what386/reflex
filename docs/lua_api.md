@@ -34,6 +34,10 @@ reflex.signal.disconnect("myapp::status", fn)
 
 ```lua
 reflex.bind("ctrl+t", function() end)        -- key combo -> function
+reflex.bind("ctrl+u", {                      -- separate press/release handlers
+  down = function() end,
+  up = function() end,
+})
 reflex.bind("ctrl+back", function() end)     -- keyboard + mouse button combo
 reflex.hotkey("capslock", "ctrl")           -- key becomes another key
 reflex.hotkey("back", "forward")            -- mouse button remap

@@ -1,7 +1,7 @@
 use crate::lua::ErrorKind;
 use crate::lua::LuaError;
 use notify_rust::{Notification, Timeout, Urgency};
-pub use reflex_core::MouseMoveMode;
+pub use reflex_core::{BindEvent, BindPhase, MouseMoveMode};
 use reflex_core::{key_send_warning, validate_key_combo, validate_key_name};
 use std::env;
 use std::ffi::OsStr;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BindingPoll {
-    pub events: Vec<String>,
+    pub events: Vec<BindEvent>,
     pub stop_requested: bool,
 }
 
@@ -28,7 +28,7 @@ pub struct Host {
 
 pub trait Remapper: Send + Sync {
     fn name(&self) -> &'static str;
-    fn register_bind(&self, combo: &str) -> Result<(), LuaError>;
+    fn register_bind(&self, combo: &str, phases: &[BindPhase]) -> Result<(), LuaError>;
     fn remap_key(&self, from: &str, to: &str) -> Result<(), LuaError>;
     fn drain_bind_events(&self) -> Result<BindingPoll, LuaError> {
         Ok(BindingPoll::default())
@@ -150,7 +150,7 @@ impl Remapper for UnsupportedController {
         self.host
     }
 
-    fn register_bind(&self, _: &str) -> Result<(), LuaError> {
+    fn register_bind(&self, _: &str, _: &[BindPhase]) -> Result<(), LuaError> {
         Err(self.unsupported("reflex.bind"))
     }
 
@@ -228,7 +228,7 @@ impl Remapper for CheckController {
         "check"
     }
 
-    fn register_bind(&self, combo: &str) -> Result<(), LuaError> {
+    fn register_bind(&self, combo: &str, _: &[BindPhase]) -> Result<(), LuaError> {
         check_key_combo("reflex.bind", combo)
     }
 
@@ -684,8 +684,8 @@ fn clipboard_err(message: impl Into<String>) -> LuaError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipboardBackend, ErrorKind, NotificationOptions, NotificationUrgency, check_host,
-        find_processes, process_arg_matches, select_clipboard_backend,
+        BindPhase, ClipboardBackend, ErrorKind, NotificationOptions, NotificationUrgency,
+        check_host, find_processes, process_arg_matches, select_clipboard_backend,
     };
 
     #[test]
@@ -735,7 +735,9 @@ mod tests {
     fn check_host_accepts_side_effecting_api_calls_without_running_them() {
         let host = check_host();
 
-        host.remapping.register_bind("ctrl+t").unwrap();
+        host.remapping
+            .register_bind("ctrl+t", &[BindPhase::Down])
+            .unwrap();
         host.remapping.remap_key("capslock", "ctrl").unwrap();
         host.input.key_send("hello").unwrap();
         host.input.key_tap("ctrl+c").unwrap();
@@ -780,7 +782,10 @@ mod tests {
         assert_eq!(err.kind, ErrorKind::Runtime);
         assert!(err.msg.contains("reflex.key.down"));
 
-        let err = host.remapping.register_bind("ctrl+wat").unwrap_err();
+        let err = host
+            .remapping
+            .register_bind("ctrl+wat", &[BindPhase::Down])
+            .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Runtime);
         assert!(err.msg.contains("reflex.bind"));
 
@@ -794,6 +799,8 @@ mod tests {
         let host = check_host();
 
         host.input.key_tap("H").unwrap();
-        host.remapping.register_bind("H").unwrap();
+        host.remapping
+            .register_bind("H", &[BindPhase::Down])
+            .unwrap();
     }
 }

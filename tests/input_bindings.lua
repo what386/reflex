@@ -9,6 +9,7 @@ reflex.signal.connect("reflex::started", function()
     print("  ctrl+alt+t: type text")
     print("  ctrl+alt+k: send ctrl+c")
     print("  ctrl+alt+m: move/click/scroll mouse")
+    print("  ctrl+alt+u: type on key down and key up")
     print("  ctrl+back: send back")
     print("  forward: send forward")
     print("  ctrl+alt+q: exit")
@@ -36,6 +37,17 @@ reflex.bind("ctrl+alt+m", function()
     reflex.mouse.click("left")
     reflex.mouse.scroll(-1)
 end)
+
+reflex.bind("ctrl+alt+u", {
+    down = function()
+        reflex.key.type("combo down")
+        reflex.key.send("enter")
+    end,
+    up = function()
+        reflex.key.type("combo up")
+        reflex.key.send("enter")
+    end,
+})
 
 reflex.bind("ctrl+back", function()
     reflex.key.type("mouse back combo")

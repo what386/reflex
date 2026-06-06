@@ -5,6 +5,7 @@ use crate::lua::errors::{ErrorKind, LuaError};
 use crate::lua::sandbox::configure_sandbox;
 use crate::lua::types::RuntimeConfig;
 use mlua::{Function, Lua, LuaOptions, StdLib, Value};
+use reflex_core::BindPhase;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
@@ -13,9 +14,15 @@ use std::time::{Duration, Instant};
 pub(crate) struct RuntimeState {
     pub cfg: RuntimeConfig,
     pub signals: SignalState,
-    pub bindings: Vec<(String, Function)>,
+    pub bindings: Vec<BindingCallback>,
     pub timers: TimerState,
     pub should_exit: bool,
+}
+
+pub(crate) struct BindingCallback {
+    pub combo: String,
+    pub phase: BindPhase,
+    pub callback: Function,
 }
 
 impl RuntimeState {
@@ -97,14 +104,14 @@ impl Runtime {
             self.request_exit();
         }
 
-        for combo in poll.events {
+        for event in poll.events {
             let callbacks = {
                 let state = self.state.borrow();
                 state
                     .bindings
                     .iter()
-                    .filter(|(registered, _)| registered == &combo)
-                    .map(|(_, callback)| callback.clone())
+                    .filter(|binding| binding.combo == event.combo && binding.phase == event.phase)
+                    .map(|binding| binding.callback.clone())
                     .collect::<Vec<_>>()
             };
 

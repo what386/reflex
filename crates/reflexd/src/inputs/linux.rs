@@ -2,6 +2,7 @@ use crate::inputs::error::{KeypressError, Result};
 use crate::inputs::keyboard::KeyboardOutput;
 use crate::inputs::keys::{KeyCombo, KeySpec, parse_combo};
 use evdev::{AttributeSetRef, Device, EventType, InputEvent, Key, RelativeAxisType};
+use reflex_core::protocol::{BindEvent, BindPhase};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -20,7 +21,8 @@ struct State {
     next_order: u64,
     remaps: Vec<Remap>,
     bindings: Vec<Binding>,
-    pending_bindings: HashMap<ClientId, VecDeque<String>>,
+    active_up_bindings: Vec<ActiveBinding>,
+    pending_bindings: HashMap<ClientId, VecDeque<BindEvent>>,
     pressed: HashSet<u16>,
     forwarded: HashMap<u16, u16>,
     consumed: HashSet<u16>,
@@ -31,6 +33,15 @@ struct State {
 
 #[derive(Clone)]
 struct Binding {
+    client_id: ClientId,
+    order: u64,
+    original: String,
+    keys: BTreeSet<u16>,
+    phase: BindPhase,
+}
+
+#[derive(Clone)]
+struct ActiveBinding {
     client_id: ClientId,
     order: u64,
     original: String,
@@ -56,20 +67,28 @@ impl LinuxKeypress {
         keypress
     }
 
-    pub fn register_bind_for(&self, client_id: ClientId, combo: &str) -> Result<()> {
+    pub fn register_bind_for(
+        &self,
+        client_id: ClientId,
+        combo: &str,
+        phases: &[BindPhase],
+    ) -> Result<()> {
         let combo = parse_combo(combo)?;
         {
             let mut state = self.state.lock().unwrap();
             let order = state.next_order;
             state.next_order += 1;
-            debug_log_registered_bind(&state, client_id, order, &combo);
-            for keys in combo.evdev_sets() {
-                state.bindings.push(Binding {
-                    client_id,
-                    order,
-                    keys,
-                    original: combo.original.clone(),
-                });
+            debug_log_registered_bind(&state, client_id, order, &combo, phases);
+            for phase in phases {
+                for keys in combo.evdev_sets() {
+                    state.bindings.push(Binding {
+                        client_id,
+                        order,
+                        keys,
+                        original: combo.original.clone(),
+                        phase: *phase,
+                    });
+                }
             }
         }
         self.ensure_listener()
@@ -96,7 +115,7 @@ impl LinuxKeypress {
         self.ensure_listener()
     }
 
-    pub fn drain_bindings_for(&self, client_id: ClientId) -> Vec<String> {
+    pub fn drain_bindings_for(&self, client_id: ClientId) -> Vec<BindEvent> {
         let mut state = self.state.lock().unwrap();
         state
             .pending_bindings
@@ -109,6 +128,9 @@ impl LinuxKeypress {
     pub fn remove_client(&self, client_id: ClientId) {
         let mut state = self.state.lock().unwrap();
         state.remaps.retain(|remap| remap.client_id != client_id);
+        state
+            .active_up_bindings
+            .retain(|binding| binding.client_id != client_id);
         state
             .bindings
             .retain(|binding| binding.client_id != client_id);
@@ -297,7 +319,7 @@ fn handle_key_event_locked(event: InputEvent, state: &mut State) -> Vec<InputEve
     let events = match value {
         1 => handle_key_down(code, state, &mut matched, &mut matched_keys),
         2 => handle_key_repeat(code, state),
-        0 => handle_key_up(code, state),
+        0 => handle_key_up(code, state, &mut matched),
         _ => vec![InputEvent::new(
             EventType::KEY,
             remap_target(state, code),
@@ -333,26 +355,29 @@ fn handle_key_down(
 ) -> Vec<InputEvent> {
     state.pressed.insert(code);
     let pressed_set = state.pressed.iter().copied().collect::<BTreeSet<_>>();
-    for binding in state
+    let matching = state
         .bindings
         .iter()
         .filter(|binding| binding.keys.is_subset(&pressed_set))
-    {
-        let entry = matched
-            .entry(binding.original.clone())
-            .or_insert((binding.order, binding.client_id));
-        if binding.order >= entry.0 {
-            *entry = (binding.order, binding.client_id);
-        }
+        .cloned()
+        .collect::<Vec<_>>();
+    for binding in matching {
+        record_matched_binding(matched, &binding);
         matched_keys.extend(binding.keys.iter().copied());
-    }
-
-    for (combo, (_, client_id)) in matched.iter() {
-        state
-            .pending_bindings
-            .entry(*client_id)
-            .or_default()
-            .push_back(combo.clone());
+        match binding.phase {
+            BindPhase::Down => queue_bind_event(
+                state,
+                binding.client_id,
+                binding.original.clone(),
+                BindPhase::Down,
+            ),
+            BindPhase::Up => state.active_up_bindings.push(ActiveBinding {
+                client_id: binding.client_id,
+                order: binding.order,
+                original: binding.original.clone(),
+                keys: binding.keys.clone(),
+            }),
+        }
     }
 
     if !matched.is_empty() {
@@ -381,7 +406,12 @@ fn handle_key_repeat(code: u16, state: &mut State) -> Vec<InputEvent> {
     vec![InputEvent::new(EventType::KEY, target, 2)]
 }
 
-fn handle_key_up(code: u16, state: &mut State) -> Vec<InputEvent> {
+fn handle_key_up(
+    code: u16,
+    state: &mut State,
+    matched: &mut BTreeMap<String, (u64, ClientId)>,
+) -> Vec<InputEvent> {
+    emit_active_up_bindings(code, state, matched);
     state.pressed.remove(&code);
     if state.consumed.remove(&code) {
         state.forwarded.remove(&code);
@@ -393,6 +423,62 @@ fn handle_key_up(code: u16, state: &mut State) -> Vec<InputEvent> {
         .remove(&code)
         .unwrap_or_else(|| remap_target(state, code));
     vec![InputEvent::new(EventType::KEY, target, 0)]
+}
+
+fn emit_active_up_bindings(
+    code: u16,
+    state: &mut State,
+    matched: &mut BTreeMap<String, (u64, ClientId)>,
+) {
+    let mut remaining = Vec::new();
+    let active = std::mem::take(&mut state.active_up_bindings);
+    for binding in active {
+        if binding.keys.contains(&code) {
+            record_matched(
+                matched,
+                BindPhase::Up,
+                &binding.original,
+                binding.order,
+                binding.client_id,
+            );
+            queue_bind_event(state, binding.client_id, binding.original, BindPhase::Up);
+        } else {
+            remaining.push(binding);
+        }
+    }
+    state.active_up_bindings = remaining;
+}
+
+fn record_matched_binding(matched: &mut BTreeMap<String, (u64, ClientId)>, binding: &Binding) {
+    record_matched(
+        matched,
+        binding.phase,
+        &binding.original,
+        binding.order,
+        binding.client_id,
+    );
+}
+
+fn record_matched(
+    matched: &mut BTreeMap<String, (u64, ClientId)>,
+    phase: BindPhase,
+    combo: &str,
+    order: u64,
+    client_id: ClientId,
+) {
+    let label = format!("{combo}:{}", phase_label(phase));
+    let entry = matched.entry(label).or_insert((order, client_id));
+    if order >= entry.0 {
+        *entry = (order, client_id);
+    }
+}
+
+fn queue_bind_event(state: &mut State, client_id: ClientId, combo: String, phase: BindPhase) {
+    state
+        .pending_bindings
+        .entry(client_id)
+        .or_default()
+        .push_back(BindEvent { combo, phase });
 }
 
 fn consume_keys(state: &mut State, keys: &BTreeSet<u16>) -> Vec<InputEvent> {
@@ -430,15 +516,22 @@ fn logical_remaps(client_id: ClientId, order: u64, from: &KeySpec, to: &KeySpec)
         .collect()
 }
 
-fn debug_log_registered_bind(state: &State, client_id: ClientId, order: u64, combo: &KeyCombo) {
+fn debug_log_registered_bind(
+    state: &State,
+    client_id: ClientId,
+    order: u64,
+    combo: &KeyCombo,
+    phases: &[BindPhase],
+) {
     if !state.debug {
         return;
     }
 
     eprintln!(
-        "reflexd: debug bind client={client_id} order={} combo={} keys={}",
+        "reflexd: debug bind client={client_id} order={} combo={} phases={} keys={}",
         order,
         combo.original,
+        format_bind_phases(phases),
         format_combo_sets(&combo.evdev_sets())
     );
 }
@@ -571,6 +664,23 @@ fn format_combo_sets(sets: &[BTreeSet<u16>]) -> String {
     format!("[{sets}]")
 }
 
+fn format_bind_phases(phases: &[BindPhase]) -> String {
+    let phases = phases
+        .iter()
+        .copied()
+        .map(phase_label)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{phases}]")
+}
+
+fn phase_label(phase: BindPhase) -> &'static str {
+    match phase {
+        BindPhase::Down => "down",
+        BindPhase::Up => "up",
+    }
+}
+
 fn format_string_list(items: &[String]) -> String {
     if items.is_empty() {
         "[]".to_string()
@@ -620,10 +730,21 @@ mod tests {
             order,
             original: original.to_string(),
             keys: keys.iter().map(|key| key.code()).collect(),
+            phase: BindPhase::Down,
         }
     }
 
     fn add_combo_binding(state: &mut State, client_id: ClientId, order: u64, combo: &str) {
+        add_combo_binding_with_phase(state, client_id, order, combo, BindPhase::Down);
+    }
+
+    fn add_combo_binding_with_phase(
+        state: &mut State,
+        client_id: ClientId,
+        order: u64,
+        combo: &str,
+        phase: BindPhase,
+    ) {
         let combo = parse_combo(combo).unwrap();
         for keys in combo.evdev_sets() {
             state.bindings.push(Binding {
@@ -631,7 +752,32 @@ mod tests {
                 order,
                 original: combo.original.clone(),
                 keys,
+                phase,
             });
+        }
+    }
+
+    fn pending_events(state: &State, client_id: ClientId) -> Vec<BindEvent> {
+        state
+            .pending_bindings
+            .get(&client_id)
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    fn down_event(combo: &str) -> BindEvent {
+        BindEvent {
+            combo: combo.to_string(),
+            phase: BindPhase::Down,
+        }
+    }
+
+    fn up_event(combo: &str) -> BindEvent {
+        BindEvent {
+            combo: combo.to_string(),
+            phase: BindPhase::Up,
         }
     }
 
@@ -711,15 +857,7 @@ mod tests {
 
         let events = handle_key_event_locked(key_event(Key::BTN_SIDE, 1), &mut state);
         assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 0)]);
-        assert_eq!(
-            state
-                .pending_bindings
-                .get(&1)
-                .unwrap()
-                .iter()
-                .collect::<Vec<_>>(),
-            vec!["ctrl+back"]
-        );
+        assert_eq!(pending_events(&state, 1), vec![down_event("ctrl+back")]);
 
         assert!(handle_key_event_locked(key_event(Key::BTN_SIDE, 0), &mut state).is_empty());
         assert!(handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 0), &mut state).is_empty());
@@ -735,15 +873,7 @@ mod tests {
 
         let events = handle_key_event_locked(key_event(Key::BTN_BACK, 1), &mut state);
         assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 0)]);
-        assert_eq!(
-            state
-                .pending_bindings
-                .get(&1)
-                .unwrap()
-                .iter()
-                .collect::<Vec<_>>(),
-            vec!["ctrl+back"]
-        );
+        assert_eq!(pending_events(&state, 1), vec![down_event("ctrl+back")]);
 
         assert!(handle_key_event_locked(key_event(Key::BTN_BACK, 0), &mut state).is_empty());
         assert!(handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 0), &mut state).is_empty());
@@ -756,17 +886,44 @@ mod tests {
             add_combo_binding(&mut state, 1, 0, "forward");
 
             assert!(handle_key_event_locked(key_event(key, 1), &mut state).is_empty());
-            assert_eq!(
-                state
-                    .pending_bindings
-                    .get(&1)
-                    .unwrap()
-                    .iter()
-                    .collect::<Vec<_>>(),
-                vec!["forward"]
-            );
+            assert_eq!(pending_events(&state, 1), vec![down_event("forward")]);
             assert!(handle_key_event_locked(key_event(key, 0), &mut state).is_empty());
         }
+    }
+
+    #[test]
+    fn up_bind_fires_when_matched_combo_is_released() {
+        let mut state = State::default();
+        add_combo_binding_with_phase(&mut state, 1, 0, "ctrl+t", BindPhase::Up);
+
+        let events = handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 1)]);
+        let events = handle_key_event_locked(key_event(Key::KEY_T, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 0)]);
+        assert!(!state.pending_bindings.contains_key(&1));
+
+        assert!(handle_key_event_locked(key_event(Key::KEY_T, 0), &mut state).is_empty());
+        assert_eq!(pending_events(&state, 1), vec![up_event("ctrl+t")]);
+        assert!(handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 0), &mut state).is_empty());
+    }
+
+    #[test]
+    fn down_and_up_bind_fire_separate_events() {
+        let mut state = State::default();
+        add_combo_binding_with_phase(&mut state, 1, 0, "ctrl+t", BindPhase::Down);
+        add_combo_binding_with_phase(&mut state, 1, 0, "ctrl+t", BindPhase::Up);
+
+        let events = handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 1)]);
+        let events = handle_key_event_locked(key_event(Key::KEY_T, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 0)]);
+        assert!(handle_key_event_locked(key_event(Key::KEY_T, 0), &mut state).is_empty());
+
+        assert_eq!(
+            pending_events(&state, 1),
+            vec![down_event("ctrl+t"), up_event("ctrl+t")]
+        );
+        assert!(handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 0), &mut state).is_empty());
     }
 
     #[test]
@@ -805,15 +962,7 @@ mod tests {
             event_tuples(&events),
             vec![(Key::KEY_LEFTCTRL.code(), 0), (Key::KEY_LEFTALT.code(), 0)]
         );
-        assert_eq!(
-            state
-                .pending_bindings
-                .get(&1)
-                .unwrap()
-                .iter()
-                .collect::<Vec<_>>(),
-            vec!["ctrl+alt+t"]
-        );
+        assert_eq!(pending_events(&state, 1), vec![down_event("ctrl+alt+t")]);
         assert!(state.consumed.contains(&Key::KEY_LEFTCTRL.code()));
         assert!(state.consumed.contains(&Key::KEY_LEFTALT.code()));
         assert!(state.consumed.contains(&Key::KEY_T.code()));

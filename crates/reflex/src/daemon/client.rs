@@ -1,4 +1,6 @@
-use crate::host::{BindingPoll, InputController, MouseMoveMode, ProcessController, Remapper};
+use crate::host::{
+    BindPhase, BindingPoll, InputController, MouseMoveMode, ProcessController, Remapper,
+};
 use crate::lua::{ErrorKind, LuaError};
 use reflex_core::protocol::{Request, Response, ScriptInfo, WireMouseMoveMode};
 use reflex_core::{SOCKET_ENV, default_socket_path};
@@ -72,9 +74,10 @@ impl Remapper for DaemonHost {
         "reflexd"
     }
 
-    fn register_bind(&self, combo: &str) -> Result<(), LuaError> {
+    fn register_bind(&self, combo: &str, phases: &[BindPhase]) -> Result<(), LuaError> {
         self.ok(Request::RegisterBind {
             combo: combo.to_string(),
+            phases: phases.to_vec(),
         })
     }
 

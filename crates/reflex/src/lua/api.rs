@@ -1,10 +1,11 @@
 use crate::host::{NotificationOptions, NotificationUrgency};
 use crate::lua::components::{signal, timer};
 use crate::lua::errors::{ErrorKind, LuaError};
-use crate::lua::runtime::RuntimeState;
+use crate::lua::runtime::{BindingCallback, RuntimeState};
 use crate::lua::stdlib;
 use crate::lua::types::MouseMoveMode;
 use mlua::{Function, Lua, Table, Value, Variadic};
+use reflex_core::BindPhase;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -35,13 +36,18 @@ fn register_root(
     reflex
         .set(
             "bind",
-            lua.create_function(move |_, (combo, callback): (String, Function)| {
+            lua.create_function(move |_, (combo, handler): (String, Value)| {
+                let callbacks = bind_callbacks(&combo, handler).map_err(mlua::Error::external)?;
+                let phases = callbacks
+                    .iter()
+                    .map(|binding| binding.phase)
+                    .collect::<Vec<_>>();
                 st.borrow()
                     .host()
                     .remapping
-                    .register_bind(&combo)
+                    .register_bind(&combo, &phases)
                     .map_err(mlua::Error::external)?;
-                st.borrow_mut().bindings.push((combo, callback));
+                st.borrow_mut().bindings.extend(callbacks);
                 Ok(())
             })
             .map_err(lua_err)?,
@@ -101,6 +107,47 @@ fn register_root(
             .map_err(lua_err)?,
         )
         .map_err(lua_err)
+}
+
+fn bind_callbacks(combo: &str, handler: Value) -> Result<Vec<BindingCallback>, LuaError> {
+    match handler {
+        Value::Function(callback) => Ok(vec![BindingCallback {
+            combo: combo.to_string(),
+            phase: BindPhase::Down,
+            callback,
+        }]),
+        Value::Table(table) => {
+            let mut callbacks = Vec::new();
+            if let Some(callback) = table.get::<Option<Function>>("down").map_err(lua_err)? {
+                callbacks.push(BindingCallback {
+                    combo: combo.to_string(),
+                    phase: BindPhase::Down,
+                    callback,
+                });
+            }
+            if let Some(callback) = table.get::<Option<Function>>("up").map_err(lua_err)? {
+                callbacks.push(BindingCallback {
+                    combo: combo.to_string(),
+                    phase: BindPhase::Up,
+                    callback,
+                });
+            }
+            if callbacks.is_empty() {
+                return Err(LuaError::new(
+                    ErrorKind::Runtime,
+                    "reflex.bind handler table must include down and/or up functions",
+                ));
+            }
+            Ok(callbacks)
+        }
+        other => Err(LuaError::new(
+            ErrorKind::Runtime,
+            format!(
+                "reflex.bind handler must be a function or table, got {}",
+                other.type_name()
+            ),
+        )),
+    }
 }
 
 fn register_key(
@@ -471,6 +518,7 @@ fn lua_err(err: mlua::Error) -> LuaError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mlua::Lua;
 
     #[test]
     fn parses_notification_urgency_names() {
@@ -491,5 +539,48 @@ mod tests {
             NotificationUrgency::Critical
         );
         assert!(notification_urgency("urgent").is_err());
+    }
+
+    #[test]
+    fn bind_function_defaults_to_down_phase() {
+        let lua = Lua::new();
+        let callback = lua.create_function(|_, ()| Ok(())).unwrap();
+        let callbacks = bind_callbacks("ctrl+t", Value::Function(callback)).unwrap();
+
+        assert_eq!(callbacks.len(), 1);
+        assert_eq!(callbacks[0].combo, "ctrl+t");
+        assert_eq!(callbacks[0].phase, BindPhase::Down);
+    }
+
+    #[test]
+    fn bind_table_accepts_down_and_up_callbacks() {
+        let lua = Lua::new();
+        let table = lua.create_table().unwrap();
+        table
+            .set("down", lua.create_function(|_, ()| Ok(())).unwrap())
+            .unwrap();
+        table
+            .set("up", lua.create_function(|_, ()| Ok(())).unwrap())
+            .unwrap();
+
+        let callbacks = bind_callbacks("ctrl+t", Value::Table(table)).unwrap();
+
+        assert_eq!(callbacks.len(), 2);
+        assert_eq!(callbacks[0].phase, BindPhase::Down);
+        assert_eq!(callbacks[1].phase, BindPhase::Up);
+    }
+
+    #[test]
+    fn bind_table_rejects_empty_handler_table() {
+        let lua = Lua::new();
+        let table = lua.create_table().unwrap();
+
+        let err = match bind_callbacks("ctrl+t", Value::Table(table)) {
+            Ok(_) => panic!("empty handler table should fail"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind, ErrorKind::Runtime);
+        assert!(err.msg.contains("down and/or up"));
     }
 }

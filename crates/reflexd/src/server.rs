@@ -131,7 +131,9 @@ fn handle_request(
             Ok(script) => return Response::ScriptStopped { script },
             Err(message) => return Response::Error { message },
         },
-        Request::RegisterBind { combo } => input.register_bind_for(client_id, &combo),
+        Request::RegisterBind { combo, phases } => {
+            input.register_bind_for(client_id, &combo, &phases)
+        }
         Request::RemapKey { from, to } => input.remap_key_for(client_id, &from, &to),
         Request::DrainBindEvents => {
             let events = input.drain_bindings_for(client_id);

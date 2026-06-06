@@ -16,6 +16,19 @@ pub enum WireMouseMoveMode {
     Relative,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BindPhase {
+    Down,
+    Up,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct BindEvent {
+    pub combo: String,
+    pub phase: BindPhase,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
@@ -30,6 +43,7 @@ pub enum Request {
     },
     RegisterBind {
         combo: String,
+        phases: Vec<BindPhase>,
     },
     RemapKey {
         from: String,
@@ -86,7 +100,7 @@ pub enum Response {
         script: ScriptInfo,
     },
     BindEvents {
-        events: Vec<String>,
+        events: Vec<BindEvent>,
         stop_requested: bool,
     },
     Error {

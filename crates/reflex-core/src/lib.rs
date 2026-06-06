@@ -1,5 +1,7 @@
 pub mod protocol;
 
+pub use protocol::{BindEvent, BindPhase};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseMoveMode {
     Absolute,
