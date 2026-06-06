@@ -28,9 +28,7 @@ reflex.bind("ctrl+alt+t", function()
 end)
 
 reflex.bind("ctrl+alt+k", function()
-    reflex.key.down("ctrl")
-    reflex.key.send("c")
-    reflex.key.up("ctrl")
+    reflex.key.send("ctrl+c")
 end)
 
 reflex.bind("ctrl+alt+m", function()
