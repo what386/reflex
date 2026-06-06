@@ -142,5 +142,5 @@ reflex.table.filter({ 1, 2, 3 }, function(value) return value > 1 end)
 - Key names are lowercase strings: `"ctrl"`, `"shift"`, `"alt"`, `"win"`, `"enter"`, `"space"`, `"f1"`-`"f12"`, etc.
 - Combos are joined with `+`: `"ctrl+shift+t"`.
 - Mouse buttons: `"left"`, `"right"`, `"middle"`, `"back"`, `"forward"`.
-- Mouse-button binds and hotkeys use `"mouse_left"`, `"mouse_right"`, `"mouse_middle"`, `"back"`, and `"forward"`. In binds, `"left"` and `"right"` are arrow keys.
+- Mouse-button binds and hotkeys use `"mouse_left"`, `"mouse_right"`, `"mouse_middle"`, `"back"`, and `"forward"`. In binds, `"left"` and `"right"` are arrow keys. `"back"` and `"forward"` match both common Linux thumb-button code families.
 - V1 intentionally does not include window APIs.

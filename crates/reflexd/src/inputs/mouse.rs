@@ -73,6 +73,8 @@ fn virtual_mouse() -> Result<VirtualDevice> {
         Key::BTN_MIDDLE,
         Key::BTN_SIDE,
         Key::BTN_EXTRA,
+        Key::BTN_FORWARD,
+        Key::BTN_BACK,
     ]
     .into_iter()
     .collect::<AttributeSet<_>>();

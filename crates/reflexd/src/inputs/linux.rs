@@ -1,9 +1,9 @@
 use crate::inputs::error::{KeypressError, Result};
 use crate::inputs::keyboard::KeyboardOutput;
-use crate::inputs::keys::{KeyCombo, parse_combo};
-use evdev::{Device, EventType, InputEvent, Key, RelativeAxisType};
+use crate::inputs::keys::{KeyCombo, KeySpec, parse_combo};
+use evdev::{AttributeSetRef, Device, EventType, InputEvent, Key, RelativeAxisType};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -63,12 +63,14 @@ impl LinuxKeypress {
             let order = state.next_order;
             state.next_order += 1;
             debug_log_registered_bind(&state, client_id, order, &combo);
-            state.bindings.push(Binding {
-                client_id,
-                order,
-                keys: combo.evdev_set(),
-                original: combo.original,
-            });
+            for keys in combo.evdev_sets() {
+                state.bindings.push(Binding {
+                    client_id,
+                    order,
+                    keys,
+                    original: combo.original.clone(),
+                });
+            }
         }
         self.ensure_listener()
     }
@@ -83,16 +85,13 @@ impl LinuxKeypress {
             if state.debug {
                 eprintln!(
                     "reflexd: debug remap client={client_id} order={order} from={} to={}",
-                    key_label(from.evdev.code()),
-                    key_label(to.evdev.code())
+                    format_key_codes(&from.evdev_codes()),
+                    format_key_codes(&to.evdev_codes())
                 );
             }
-            state.remaps.push(Remap {
-                client_id,
-                order,
-                from: from.evdev.code(),
-                to: to.evdev.code(),
-            });
+            state
+                .remaps
+                .extend(logical_remaps(client_id, order, &from, &to));
         }
         self.ensure_listener()
     }
@@ -173,7 +172,11 @@ impl LinuxKeypress {
             state.keyboard = Some(virtual_keyboard.clone());
         }
 
-        for (path, device) in sources {
+        let debug = self.state.lock().unwrap().debug;
+        for (path, device, class) in sources {
+            if debug {
+                debug_log_input_source(&path, &device, class);
+            }
             spawn_reader(path, device, self.state.clone(), virtual_keyboard.clone());
         }
 
@@ -181,9 +184,11 @@ impl LinuxKeypress {
     }
 }
 
-fn input_devices() -> Result<Vec<(PathBuf, Device)>> {
+fn input_devices() -> Result<Vec<(PathBuf, Device, InputSourceClass)>> {
     let devices = evdev::enumerate()
-        .filter(|(_, device)| is_input_source(device))
+        .filter_map(|(path, device)| {
+            classify_input_source(&device).map(|class| (path, device, class))
+        })
         .collect::<Vec<_>>();
 
     if devices.is_empty() {
@@ -193,32 +198,46 @@ fn input_devices() -> Result<Vec<(PathBuf, Device)>> {
     Ok(devices)
 }
 
-fn is_input_source(device: &Device) -> bool {
+fn classify_input_source(device: &Device) -> Option<InputSourceClass> {
     if device
         .name()
         .is_some_and(|name| name.starts_with("reflex-keypress"))
     {
-        return false;
+        return None;
     }
 
-    is_keyboard(device) || is_relative_mouse(device)
+    classify_input_source_parts(device.supported_keys(), device.supported_relative_axes())
 }
 
-fn is_keyboard(device: &Device) -> bool {
-    device.supported_keys().is_some_and(|keys| {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct InputSourceClass {
+    keyboard: bool,
+    mouse_buttons: bool,
+    relative_pointer: bool,
+}
+
+fn classify_input_source_parts(
+    keys: Option<&AttributeSetRef<Key>>,
+    axes: Option<&AttributeSetRef<RelativeAxisType>>,
+) -> Option<InputSourceClass> {
+    let keyboard = keys.is_some_and(|keys| {
         keys.contains(Key::KEY_A) && keys.contains(Key::KEY_SPACE) && keys.contains(Key::KEY_ENTER)
-    })
-}
-
-fn is_relative_mouse(device: &Device) -> bool {
-    let has_mouse_buttons = device
-        .supported_keys()
-        .is_some_and(|keys| MOUSE_BUTTONS.iter().any(|button| keys.contains(*button)));
-    let has_relative_pointer = device.supported_relative_axes().is_some_and(|axes| {
+    });
+    let mouse_buttons =
+        keys.is_some_and(|keys| MOUSE_BUTTONS.iter().any(|button| keys.contains(*button)));
+    let relative_pointer = axes.is_some_and(|axes| {
         axes.contains(RelativeAxisType::REL_X) && axes.contains(RelativeAxisType::REL_Y)
     });
 
-    has_mouse_buttons && has_relative_pointer
+    if keyboard || mouse_buttons {
+        Some(InputSourceClass {
+            keyboard,
+            mouse_buttons,
+            relative_pointer,
+        })
+    } else {
+        None
+    }
 }
 
 fn spawn_reader(
@@ -397,6 +416,20 @@ fn remap_target(state: &State, code: u16) -> u16 {
         .unwrap_or(code)
 }
 
+fn logical_remaps(client_id: ClientId, order: u64, from: &KeySpec, to: &KeySpec) -> Vec<Remap> {
+    let to_codes = to.evdev_codes();
+    from.evdev_codes()
+        .into_iter()
+        .enumerate()
+        .map(|(index, from_code)| Remap {
+            client_id,
+            order,
+            from: from_code,
+            to: to_codes.get(index).copied().unwrap_or(to.evdev.code()),
+        })
+        .collect()
+}
+
 fn debug_log_registered_bind(state: &State, client_id: ClientId, order: u64, combo: &KeyCombo) {
     if !state.debug {
         return;
@@ -406,8 +439,31 @@ fn debug_log_registered_bind(state: &State, client_id: ClientId, order: u64, com
         "reflexd: debug bind client={client_id} order={} combo={} keys={}",
         order,
         combo.original,
-        format_key_set(&combo.evdev_set())
+        format_combo_sets(&combo.evdev_sets())
     );
+}
+
+fn debug_log_input_source(path: &Path, device: &Device, class: InputSourceClass) {
+    eprintln!(
+        "reflexd: debug input source path={} name={:?} class={}",
+        path.display(),
+        device.name().unwrap_or("unknown"),
+        format_input_source_class(class)
+    );
+}
+
+fn format_input_source_class(class: InputSourceClass) -> String {
+    let mut parts = Vec::new();
+    if class.keyboard {
+        parts.push("keyboard");
+    }
+    if class.mouse_buttons {
+        parts.push("mouse-buttons");
+    }
+    if class.relative_pointer {
+        parts.push("relative-pointer");
+    }
+    parts.join(",")
 }
 
 struct DebugKeyEvent<'a> {
@@ -497,6 +553,24 @@ fn format_key_set(keys: &BTreeSet<u16>) -> String {
     format!("[{keys}]")
 }
 
+fn format_key_codes(keys: &[u16]) -> String {
+    let keys = keys.iter().copied().collect::<BTreeSet<_>>();
+    format_key_set(&keys)
+}
+
+fn format_combo_sets(sets: &[BTreeSet<u16>]) -> String {
+    if sets.len() == 1 {
+        return format_key_set(&sets[0]);
+    }
+
+    let sets = sets
+        .iter()
+        .map(format_key_set)
+        .collect::<Vec<_>>()
+        .join("|");
+    format!("[{sets}]")
+}
+
 fn format_string_list(items: &[String]) -> String {
     if items.is_empty() {
         "[]".to_string()
@@ -505,17 +579,36 @@ fn format_string_list(items: &[String]) -> String {
     }
 }
 
-const MOUSE_BUTTONS: [Key; 5] = [
+const MOUSE_BUTTONS: [Key; 7] = [
     Key::BTN_LEFT,
     Key::BTN_RIGHT,
     Key::BTN_MIDDLE,
     Key::BTN_SIDE,
     Key::BTN_EXTRA,
+    Key::BTN_FORWARD,
+    Key::BTN_BACK,
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evdev::AttributeSet;
+
+    fn keys(keys: &[Key]) -> AttributeSet<Key> {
+        let mut set = AttributeSet::new();
+        for key in keys {
+            set.insert(*key);
+        }
+        set
+    }
+
+    fn axes(axes: &[RelativeAxisType]) -> AttributeSet<RelativeAxisType> {
+        let mut set = AttributeSet::new();
+        for axis in axes {
+            set.insert(*axis);
+        }
+        set
+    }
 
     fn key_event(key: Key, value: i32) -> InputEvent {
         InputEvent::new(EventType::KEY, key.code(), value)
@@ -528,6 +621,67 @@ mod tests {
             original: original.to_string(),
             keys: keys.iter().map(|key| key.code()).collect(),
         }
+    }
+
+    fn add_combo_binding(state: &mut State, client_id: ClientId, order: u64, combo: &str) {
+        let combo = parse_combo(combo).unwrap();
+        for keys in combo.evdev_sets() {
+            state.bindings.push(Binding {
+                client_id,
+                order,
+                original: combo.original.clone(),
+                keys,
+            });
+        }
+    }
+
+    #[test]
+    fn classifies_keyboard_sources() {
+        let keys = keys(&[Key::KEY_A, Key::KEY_SPACE, Key::KEY_ENTER]);
+        let class = classify_input_source_parts(Some(&keys), None).unwrap();
+
+        assert!(class.keyboard);
+        assert!(!class.mouse_buttons);
+        assert!(!class.relative_pointer);
+    }
+
+    #[test]
+    fn classifies_relative_mouse_sources() {
+        let keys = keys(&[Key::BTN_LEFT, Key::BTN_SIDE]);
+        let axes = axes(&[RelativeAxisType::REL_X, RelativeAxisType::REL_Y]);
+        let class = classify_input_source_parts(Some(&keys), Some(&axes)).unwrap();
+
+        assert!(!class.keyboard);
+        assert!(class.mouse_buttons);
+        assert!(class.relative_pointer);
+    }
+
+    #[test]
+    fn classifies_button_only_mouse_sources() {
+        let keys = keys(&[Key::BTN_SIDE]);
+        let class = classify_input_source_parts(Some(&keys), None).unwrap();
+
+        assert!(!class.keyboard);
+        assert!(class.mouse_buttons);
+        assert!(!class.relative_pointer);
+    }
+
+    #[test]
+    fn classifies_browser_button_mouse_sources() {
+        let keys = keys(&[Key::BTN_BACK, Key::BTN_FORWARD]);
+        let class = classify_input_source_parts(Some(&keys), None).unwrap();
+
+        assert!(!class.keyboard);
+        assert!(class.mouse_buttons);
+        assert!(!class.relative_pointer);
+    }
+
+    #[test]
+    fn rejects_unrelated_key_sources() {
+        let keys = keys(&[Key::KEY_VOLUMEUP]);
+
+        assert!(classify_input_source_parts(Some(&keys), None).is_none());
+        assert!(classify_input_source_parts(None, None).is_none());
     }
 
     #[test]
@@ -545,6 +699,89 @@ mod tests {
 
         let pressed_set = state.pressed.iter().copied().collect::<BTreeSet<_>>();
         assert!(state.bindings[0].keys.is_subset(&pressed_set));
+    }
+
+    #[test]
+    fn mouse_button_bind_matches_full_key_sequence() {
+        let mut state = State::default();
+        add_combo_binding(&mut state, 1, 0, "ctrl+back");
+
+        let events = handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 1)]);
+
+        let events = handle_key_event_locked(key_event(Key::BTN_SIDE, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 0)]);
+        assert_eq!(
+            state
+                .pending_bindings
+                .get(&1)
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            vec!["ctrl+back"]
+        );
+
+        assert!(handle_key_event_locked(key_event(Key::BTN_SIDE, 0), &mut state).is_empty());
+        assert!(handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 0), &mut state).is_empty());
+    }
+
+    #[test]
+    fn mouse_button_bind_matches_browser_back_code() {
+        let mut state = State::default();
+        add_combo_binding(&mut state, 1, 0, "ctrl+back");
+
+        let events = handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 1)]);
+
+        let events = handle_key_event_locked(key_event(Key::BTN_BACK, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 0)]);
+        assert_eq!(
+            state
+                .pending_bindings
+                .get(&1)
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            vec!["ctrl+back"]
+        );
+
+        assert!(handle_key_event_locked(key_event(Key::BTN_BACK, 0), &mut state).is_empty());
+        assert!(handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 0), &mut state).is_empty());
+    }
+
+    #[test]
+    fn forward_bind_matches_extra_and_forward_codes() {
+        for key in [Key::BTN_EXTRA, Key::BTN_FORWARD] {
+            let mut state = State::default();
+            add_combo_binding(&mut state, 1, 0, "forward");
+
+            assert!(handle_key_event_locked(key_event(key, 1), &mut state).is_empty());
+            assert_eq!(
+                state
+                    .pending_bindings
+                    .get(&1)
+                    .unwrap()
+                    .iter()
+                    .collect::<Vec<_>>(),
+                vec!["forward"]
+            );
+            assert!(handle_key_event_locked(key_event(key, 0), &mut state).is_empty());
+        }
+    }
+
+    #[test]
+    fn logical_mouse_remaps_preserve_button_family() {
+        let from = crate::inputs::parse_key("back").unwrap();
+        let to = crate::inputs::parse_key("forward").unwrap();
+        let remaps = logical_remaps(1, 0, &from, &to);
+
+        assert_eq!(remaps.len(), 2);
+        assert!(remaps.iter().any(|remap| {
+            remap.from == Key::BTN_SIDE.code() && remap.to == Key::BTN_EXTRA.code()
+        }));
+        assert!(remaps.iter().any(|remap| {
+            remap.from == Key::BTN_BACK.code() && remap.to == Key::BTN_FORWARD.code()
+        }));
     }
 
     #[test]

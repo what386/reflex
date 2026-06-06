@@ -133,12 +133,14 @@ const MODIFIERS: [Key; 8] = [
     Key::KEY_RIGHTMETA,
 ];
 
-const MOUSE_BUTTONS: [Key; 5] = [
+const MOUSE_BUTTONS: [Key; 7] = [
     Key::BTN_LEFT,
     Key::BTN_RIGHT,
     Key::BTN_MIDDLE,
     Key::BTN_SIDE,
     Key::BTN_EXTRA,
+    Key::BTN_FORWARD,
+    Key::BTN_BACK,
 ];
 
 fn char_key(ch: char) -> Result<(Key, bool)> {

@@ -7,6 +7,16 @@ use std::collections::BTreeSet;
 pub struct KeySpec {
     pub name: &'static str,
     pub evdev: EvdevKey,
+    pub alternatives: &'static [EvdevKey],
+}
+
+impl KeySpec {
+    pub fn evdev_codes(&self) -> Vec<u16> {
+        let mut codes = Vec::with_capacity(self.alternatives.len() + 1);
+        codes.push(self.evdev.code());
+        codes.extend(self.alternatives.iter().map(|key| key.code()));
+        codes
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +28,26 @@ pub struct KeyCombo {
 impl KeyCombo {
     pub fn evdev_set(&self) -> BTreeSet<u16> {
         self.keys.iter().map(|key| key.evdev.code()).collect()
+    }
+
+    pub fn evdev_sets(&self) -> Vec<BTreeSet<u16>> {
+        let mut sets = vec![BTreeSet::new()];
+        for key in &self.keys {
+            let codes = key.evdev_codes();
+            let mut next = Vec::new();
+            for set in &sets {
+                for code in &codes {
+                    let mut set = set.clone();
+                    set.insert(*code);
+                    next.push(set);
+                }
+            }
+            sets = next;
+        }
+
+        sets.sort();
+        sets.dedup();
+        sets
     }
 }
 
@@ -65,8 +95,10 @@ fn parse_key_inner(name: &str) -> Option<KeySpec> {
         "mouse_left" => spec("mouse_left", EvdevKey::BTN_LEFT),
         "mouse_right" => spec("mouse_right", EvdevKey::BTN_RIGHT),
         "mouse_middle" => spec("mouse_middle", EvdevKey::BTN_MIDDLE),
-        "back" => spec("back", EvdevKey::BTN_SIDE),
-        "forward" => spec("forward", EvdevKey::BTN_EXTRA),
+        "back" => spec_with_alternatives("back", EvdevKey::BTN_SIDE, &[EvdevKey::BTN_BACK]),
+        "forward" => {
+            spec_with_alternatives("forward", EvdevKey::BTN_EXTRA, &[EvdevKey::BTN_FORWARD])
+        }
         "home" => spec("home", EvdevKey::KEY_HOME),
         "end" => spec("end", EvdevKey::KEY_END),
         "pageup" => spec("pageup", EvdevKey::KEY_PAGEUP),
@@ -137,7 +169,19 @@ fn parse_key_inner(name: &str) -> Option<KeySpec> {
 }
 
 fn spec(name: &'static str, evdev: EvdevKey) -> KeySpec {
-    KeySpec { name, evdev }
+    spec_with_alternatives(name, evdev, &[])
+}
+
+fn spec_with_alternatives(
+    name: &'static str,
+    evdev: EvdevKey,
+    alternatives: &'static [EvdevKey],
+) -> KeySpec {
+    KeySpec {
+        name,
+        evdev,
+        alternatives,
+    }
 }
 
 #[cfg(test)]
@@ -159,6 +203,19 @@ mod tests {
         let combo = parse_combo("ctrl+back").unwrap();
         assert!(combo.evdev_set().contains(&EvdevKey::KEY_LEFTCTRL.code()));
         assert!(combo.evdev_set().contains(&EvdevKey::BTN_SIDE.code()));
+        assert!(!combo.evdev_set().contains(&EvdevKey::BTN_BACK.code()));
+        assert!(combo.evdev_sets().iter().any(|set| {
+            set.contains(&EvdevKey::KEY_LEFTCTRL.code()) && set.contains(&EvdevKey::BTN_BACK.code())
+        }));
+
+        let combo = parse_combo("forward").unwrap();
+        assert!(combo.evdev_set().contains(&EvdevKey::BTN_EXTRA.code()));
+        assert!(
+            combo
+                .evdev_sets()
+                .iter()
+                .any(|set| { set.len() == 1 && set.contains(&EvdevKey::BTN_FORWARD.code()) })
+        );
 
         let combo = parse_combo("mouse_left").unwrap();
         assert!(combo.evdev_set().contains(&EvdevKey::BTN_LEFT.code()));
