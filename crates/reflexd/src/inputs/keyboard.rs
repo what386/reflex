@@ -131,11 +131,8 @@ const MOUSE_BUTTONS: [Key; 5] = [
 
 fn char_key(ch: char) -> Result<(Key, bool)> {
     let key = match ch {
-        'a'..='z' => (
-            Key::new(Key::KEY_A.code() + (ch as u16 - 'a' as u16)),
-            false,
-        ),
-        'A'..='Z' => (Key::new(Key::KEY_A.code() + (ch as u16 - 'A' as u16)), true),
+        'a'..='z' => (letter_key(ch), false),
+        'A'..='Z' => (letter_key(ch.to_ascii_lowercase()), true),
         '0' => (Key::KEY_0, false),
         '1' => (Key::KEY_1, false),
         '2' => (Key::KEY_2, false),
@@ -190,6 +187,38 @@ fn char_key(ch: char) -> Result<(Key, bool)> {
     Ok(key)
 }
 
+fn letter_key(ch: char) -> Key {
+    match ch {
+        'a' => Key::KEY_A,
+        'b' => Key::KEY_B,
+        'c' => Key::KEY_C,
+        'd' => Key::KEY_D,
+        'e' => Key::KEY_E,
+        'f' => Key::KEY_F,
+        'g' => Key::KEY_G,
+        'h' => Key::KEY_H,
+        'i' => Key::KEY_I,
+        'j' => Key::KEY_J,
+        'k' => Key::KEY_K,
+        'l' => Key::KEY_L,
+        'm' => Key::KEY_M,
+        'n' => Key::KEY_N,
+        'o' => Key::KEY_O,
+        'p' => Key::KEY_P,
+        'q' => Key::KEY_Q,
+        'r' => Key::KEY_R,
+        's' => Key::KEY_S,
+        't' => Key::KEY_T,
+        'u' => Key::KEY_U,
+        'v' => Key::KEY_V,
+        'w' => Key::KEY_W,
+        'x' => Key::KEY_X,
+        'y' => Key::KEY_Y,
+        'z' => Key::KEY_Z,
+        _ => unreachable!("letter_key only accepts ASCII letters"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +231,11 @@ mod tests {
         }
 
         assert!(!is_modifier(&parse_key("t").unwrap()));
+    }
+
+    #[test]
+    fn capital_letters_use_shifted_base_key() {
+        assert_eq!(char_key('H').unwrap(), (Key::KEY_H, true));
+        assert_eq!(char_key('h').unwrap(), (Key::KEY_H, false));
     }
 }

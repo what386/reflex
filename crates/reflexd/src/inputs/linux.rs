@@ -22,6 +22,8 @@ struct State {
     bindings: Vec<Binding>,
     pending_bindings: HashMap<ClientId, VecDeque<String>>,
     pressed: HashSet<u16>,
+    forwarded: HashMap<u16, u16>,
+    consumed: HashSet<u16>,
     listener_started: bool,
     keyboard: Option<KeyboardOutput>,
     debug: bool,
@@ -255,67 +257,144 @@ fn handle_key_event(
     state: &Arc<Mutex<State>>,
     virtual_keyboard: &KeyboardOutput,
 ) {
-    let code = event.code();
-    let value = event.value();
-
-    let target = {
+    let events = {
         let mut state = state.lock().unwrap();
-        let debug = state.debug;
-        let action = key_action(value);
-
-        let mut matched = BTreeMap::<String, (u64, ClientId)>::new();
-        if value == 1 {
-            state.pressed.insert(code);
-            let pressed_set = state.pressed.iter().copied().collect::<BTreeSet<_>>();
-            for binding in state
-                .bindings
-                .iter()
-                .filter(|binding| binding.keys.is_subset(&pressed_set))
-            {
-                let entry = matched
-                    .entry(binding.original.clone())
-                    .or_insert((binding.order, binding.client_id));
-                if binding.order >= entry.0 {
-                    *entry = (binding.order, binding.client_id);
-                }
-            }
-            for (combo, (_, client_id)) in &matched {
-                state
-                    .pending_bindings
-                    .entry(*client_id)
-                    .or_default()
-                    .push_back(combo.clone());
-            }
-        } else if value == 0 {
-            state.pressed.remove(&code);
-        }
-
-        let after_pressed = state.pressed.iter().copied().collect::<BTreeSet<_>>();
-        let target = state
-            .remaps
-            .iter()
-            .filter(|remap| remap.from == code)
-            .max_by_key(|remap| remap.order)
-            .map(|remap| remap.to)
-            .unwrap_or(code);
-
-        if debug {
-            debug_log_key_event(DebugKeyEvent {
-                code,
-                target,
-                value,
-                action,
-                after_pressed: &after_pressed,
-                bindings: &state.bindings,
-                matched: &matched,
-            });
-        }
-
-        target
+        handle_key_event_locked(event, &mut state)
     };
 
-    let mapped = InputEvent::new(EventType::KEY, target, value);
-    let _ = virtual_keyboard.emit_events(&[mapped]);
+    if !events.is_empty() {
+        let _ = virtual_keyboard.emit_events(&events);
+    }
+}
+
+fn handle_key_event_locked(event: InputEvent, state: &mut State) -> Vec<InputEvent> {
+    let code = event.code();
+    let value = event.value();
+    let debug = state.debug;
+    let action = key_action(value);
+    let mut matched = BTreeMap::<String, (u64, ClientId)>::new();
+    let mut matched_keys = BTreeSet::<u16>::new();
+
+    let events = match value {
+        1 => handle_key_down(code, state, &mut matched, &mut matched_keys),
+        2 => handle_key_repeat(code, state),
+        0 => handle_key_up(code, state),
+        _ => vec![InputEvent::new(
+            EventType::KEY,
+            remap_target(state, code),
+            value,
+        )],
+    };
+
+    if debug {
+        let after_pressed = state.pressed.iter().copied().collect::<BTreeSet<_>>();
+        let target = events
+            .last()
+            .map(|event| event.code())
+            .unwrap_or_else(|| remap_target(state, code));
+        debug_log_key_event(DebugKeyEvent {
+            code,
+            target,
+            value,
+            action,
+            after_pressed: &after_pressed,
+            bindings: &state.bindings,
+            matched: &matched,
+        });
+    }
+
+    events
+}
+
+fn handle_key_down(
+    code: u16,
+    state: &mut State,
+    matched: &mut BTreeMap<String, (u64, ClientId)>,
+    matched_keys: &mut BTreeSet<u16>,
+) -> Vec<InputEvent> {
+    state.pressed.insert(code);
+    let pressed_set = state.pressed.iter().copied().collect::<BTreeSet<_>>();
+    for binding in state
+        .bindings
+        .iter()
+        .filter(|binding| binding.keys.is_subset(&pressed_set))
+    {
+        let entry = matched
+            .entry(binding.original.clone())
+            .or_insert((binding.order, binding.client_id));
+        if binding.order >= entry.0 {
+            *entry = (binding.order, binding.client_id);
+        }
+        matched_keys.extend(binding.keys.iter().copied());
+    }
+
+    for (combo, (_, client_id)) in matched.iter() {
+        state
+            .pending_bindings
+            .entry(*client_id)
+            .or_default()
+            .push_back(combo.clone());
+    }
+
+    if !matched.is_empty() {
+        return consume_keys(state, matched_keys);
+    }
+
+    if state.consumed.contains(&code) {
+        return Vec::new();
+    }
+
+    let target = remap_target(state, code);
+    state.forwarded.insert(code, target);
+    vec![InputEvent::new(EventType::KEY, target, 1)]
+}
+
+fn handle_key_repeat(code: u16, state: &mut State) -> Vec<InputEvent> {
+    if state.consumed.contains(&code) {
+        return Vec::new();
+    }
+
+    let target = state
+        .forwarded
+        .get(&code)
+        .copied()
+        .unwrap_or_else(|| remap_target(state, code));
+    vec![InputEvent::new(EventType::KEY, target, 2)]
+}
+
+fn handle_key_up(code: u16, state: &mut State) -> Vec<InputEvent> {
+    state.pressed.remove(&code);
+    if state.consumed.remove(&code) {
+        state.forwarded.remove(&code);
+        return Vec::new();
+    }
+
+    let target = state
+        .forwarded
+        .remove(&code)
+        .unwrap_or_else(|| remap_target(state, code));
+    vec![InputEvent::new(EventType::KEY, target, 0)]
+}
+
+fn consume_keys(state: &mut State, keys: &BTreeSet<u16>) -> Vec<InputEvent> {
+    let mut events = Vec::new();
+    for code in keys {
+        state.consumed.insert(*code);
+        if let Some(target) = state.forwarded.remove(code) {
+            events.push(InputEvent::new(EventType::KEY, target, 0));
+        }
+    }
+    events
+}
+
+fn remap_target(state: &State, code: u16) -> u16 {
+    state
+        .remaps
+        .iter()
+        .filter(|remap| remap.from == code)
+        .max_by_key(|remap| remap.order)
+        .map(|remap| remap.to)
+        .unwrap_or(code)
 }
 
 fn debug_log_registered_bind(state: &State, client_id: ClientId, order: u64, combo: &KeyCombo) {
@@ -438,22 +517,107 @@ const MOUSE_BUTTONS: [Key; 5] = [
 mod tests {
     use super::*;
 
+    fn key_event(key: Key, value: i32) -> InputEvent {
+        InputEvent::new(EventType::KEY, key.code(), value)
+    }
+
+    fn binding(client_id: ClientId, order: u64, original: &str, keys: &[Key]) -> Binding {
+        Binding {
+            client_id,
+            order,
+            original: original.to_string(),
+            keys: keys.iter().map(|key| key.code()).collect(),
+        }
+    }
+
     #[test]
     fn shared_pressed_state_matches_cross_device_combo() {
         let mut state = State::default();
-        state.bindings.push(Binding {
-            client_id: 1,
-            order: 0,
-            original: "ctrl+back".to_string(),
-            keys: [Key::KEY_LEFTCTRL.code(), Key::BTN_SIDE.code()]
-                .into_iter()
-                .collect(),
-        });
+        state.bindings.push(binding(
+            1,
+            0,
+            "ctrl+back",
+            &[Key::KEY_LEFTCTRL, Key::BTN_SIDE],
+        ));
 
         state.pressed.insert(Key::KEY_LEFTCTRL.code());
         state.pressed.insert(Key::BTN_SIDE.code());
 
         let pressed_set = state.pressed.iter().copied().collect::<BTreeSet<_>>();
         assert!(state.bindings[0].keys.is_subset(&pressed_set));
+    }
+
+    #[test]
+    fn matched_bind_consumes_forwarded_chord() {
+        let mut state = State::default();
+        state.bindings.push(binding(
+            1,
+            0,
+            "ctrl+alt+t",
+            &[Key::KEY_LEFTCTRL, Key::KEY_LEFTALT, Key::KEY_T],
+        ));
+
+        let events = handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTCTRL.code(), 1)]);
+        let events = handle_key_event_locked(key_event(Key::KEY_LEFTALT, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_LEFTALT.code(), 1)]);
+
+        let events = handle_key_event_locked(key_event(Key::KEY_T, 1), &mut state);
+
+        assert_eq!(
+            event_tuples(&events),
+            vec![(Key::KEY_LEFTCTRL.code(), 0), (Key::KEY_LEFTALT.code(), 0)]
+        );
+        assert_eq!(
+            state
+                .pending_bindings
+                .get(&1)
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            vec!["ctrl+alt+t"]
+        );
+        assert!(state.consumed.contains(&Key::KEY_LEFTCTRL.code()));
+        assert!(state.consumed.contains(&Key::KEY_LEFTALT.code()));
+        assert!(state.consumed.contains(&Key::KEY_T.code()));
+    }
+
+    #[test]
+    fn consumed_keyups_are_suppressed() {
+        let mut state = State::default();
+        state
+            .bindings
+            .push(binding(1, 0, "ctrl+t", &[Key::KEY_LEFTCTRL, Key::KEY_T]));
+
+        handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 1), &mut state);
+        handle_key_event_locked(key_event(Key::KEY_T, 1), &mut state);
+
+        assert!(handle_key_event_locked(key_event(Key::KEY_T, 0), &mut state).is_empty());
+        assert!(handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 0), &mut state).is_empty());
+    }
+
+    #[test]
+    fn remapped_keyup_uses_forwarded_target() {
+        let mut state = State::default();
+        state.remaps.push(Remap {
+            client_id: 1,
+            order: 0,
+            from: Key::KEY_T.code(),
+            to: Key::KEY_Y.code(),
+        });
+
+        let events = handle_key_event_locked(key_event(Key::KEY_T, 1), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_Y.code(), 1)]);
+
+        state.remaps.clear();
+        let events = handle_key_event_locked(key_event(Key::KEY_T, 0), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_Y.code(), 0)]);
+    }
+
+    fn event_tuples(events: &[InputEvent]) -> Vec<(u16, i32)> {
+        events
+            .iter()
+            .map(|event| (event.code(), event.value()))
+            .collect()
     }
 }
