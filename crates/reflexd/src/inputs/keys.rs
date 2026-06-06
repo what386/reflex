@@ -62,6 +62,11 @@ fn parse_key_inner(name: &str) -> Option<KeySpec> {
         "down" => spec("down", EvdevKey::KEY_DOWN),
         "left" => spec("left", EvdevKey::KEY_LEFT),
         "right" => spec("right", EvdevKey::KEY_RIGHT),
+        "mouseleft" => spec("mouse_left", EvdevKey::BTN_LEFT),
+        "mouseright" => spec("mouse_right", EvdevKey::BTN_RIGHT),
+        "mousemiddle" => spec("mouse_middle", EvdevKey::BTN_MIDDLE),
+        "back" => spec("back", EvdevKey::BTN_SIDE),
+        "forward" => spec("forward", EvdevKey::BTN_EXTRA),
         "home" => spec("home", EvdevKey::KEY_HOME),
         "end" => spec("end", EvdevKey::KEY_END),
         "pageup" | "pgup" => spec("pageup", EvdevKey::KEY_PAGEUP),
@@ -150,6 +155,31 @@ mod tests {
         assert!(combo.evdev_set().contains(&EvdevKey::KEY_LEFTCTRL.code()));
         assert!(combo.evdev_set().contains(&EvdevKey::KEY_LEFTSHIFT.code()));
         assert!(combo.evdev_set().contains(&EvdevKey::KEY_T.code()));
+    }
+
+    #[test]
+    fn parses_named_mouse_button_combo_names() {
+        let combo = parse_combo("ctrl+back").unwrap();
+        assert!(combo.evdev_set().contains(&EvdevKey::KEY_LEFTCTRL.code()));
+        assert!(combo.evdev_set().contains(&EvdevKey::BTN_SIDE.code()));
+
+        let combo = parse_combo("mouse_left").unwrap();
+        assert!(combo.evdev_set().contains(&EvdevKey::BTN_LEFT.code()));
+    }
+
+    #[test]
+    fn keeps_left_and_right_as_arrow_keys() {
+        let combo = parse_combo("left+right").unwrap();
+        assert!(combo.evdev_set().contains(&EvdevKey::KEY_LEFT.code()));
+        assert!(combo.evdev_set().contains(&EvdevKey::KEY_RIGHT.code()));
+        assert!(!combo.evdev_set().contains(&EvdevKey::BTN_LEFT.code()));
+        assert!(!combo.evdev_set().contains(&EvdevKey::BTN_RIGHT.code()));
+    }
+
+    #[test]
+    fn rejects_numeric_mouse_aliases() {
+        assert!(parse_combo("m4").is_err());
+        assert!(parse_combo("mouse4").is_err());
     }
 
     #[test]

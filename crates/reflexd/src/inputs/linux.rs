@@ -1,7 +1,7 @@
 use crate::inputs::error::{KeypressError, Result};
 use crate::inputs::keyboard::KeyboardOutput;
 use crate::inputs::keys::{KeyCombo, parse_combo};
-use evdev::{Device, EventType, InputEvent, Key};
+use evdev::{Device, EventType, InputEvent, Key, RelativeAxisType};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -21,6 +21,7 @@ struct State {
     remaps: Vec<Remap>,
     bindings: Vec<Binding>,
     pending_bindings: HashMap<ClientId, VecDeque<String>>,
+    pressed: HashSet<u16>,
     listener_started: bool,
     keyboard: Option<KeyboardOutput>,
     debug: bool,
@@ -147,7 +148,7 @@ impl LinuxKeypress {
             }
         }
 
-        let mut sources = keyboard_devices()?;
+        let mut sources = input_devices()?;
         let virtual_keyboard = KeyboardOutput::new(VIRTUAL_DEVICE_NAME)?;
 
         let mut grabbed: Vec<usize> = Vec::new();
@@ -178,9 +179,9 @@ impl LinuxKeypress {
     }
 }
 
-fn keyboard_devices() -> Result<Vec<(PathBuf, Device)>> {
+fn input_devices() -> Result<Vec<(PathBuf, Device)>> {
     let devices = evdev::enumerate()
-        .filter(|(_, device)| is_keyboard(device))
+        .filter(|(_, device)| is_input_source(device))
         .collect::<Vec<_>>();
 
     if devices.is_empty() {
@@ -190,7 +191,7 @@ fn keyboard_devices() -> Result<Vec<(PathBuf, Device)>> {
     Ok(devices)
 }
 
-fn is_keyboard(device: &Device) -> bool {
+fn is_input_source(device: &Device) -> bool {
     if device
         .name()
         .is_some_and(|name| name.starts_with("reflex-keypress"))
@@ -198,9 +199,24 @@ fn is_keyboard(device: &Device) -> bool {
         return false;
     }
 
+    is_keyboard(device) || is_relative_mouse(device)
+}
+
+fn is_keyboard(device: &Device) -> bool {
     device.supported_keys().is_some_and(|keys| {
         keys.contains(Key::KEY_A) && keys.contains(Key::KEY_SPACE) && keys.contains(Key::KEY_ENTER)
     })
+}
+
+fn is_relative_mouse(device: &Device) -> bool {
+    let has_mouse_buttons = device
+        .supported_keys()
+        .is_some_and(|keys| MOUSE_BUTTONS.iter().any(|button| keys.contains(*button)));
+    let has_relative_pointer = device.supported_relative_axes().is_some_and(|axes| {
+        axes.contains(RelativeAxisType::REL_X) && axes.contains(RelativeAxisType::REL_Y)
+    });
+
+    has_mouse_buttons && has_relative_pointer
 }
 
 fn spawn_reader(
@@ -212,7 +228,6 @@ fn spawn_reader(
     thread::Builder::new()
         .name(format!("reflex-keypress-{}", path.display()))
         .spawn(move || {
-            let mut pressed = HashSet::new();
             loop {
                 let events = match device.fetch_events() {
                     Ok(events) => events.collect::<Vec<_>>(),
@@ -220,8 +235,12 @@ fn spawn_reader(
                 };
 
                 for event in events {
-                    if event.event_type() == EventType::KEY {
-                        handle_key_event(event, &state, &virtual_keyboard, &mut pressed);
+                    match event.event_type() {
+                        EventType::KEY => handle_key_event(event, &state, &virtual_keyboard),
+                        EventType::RELATIVE => {
+                            let _ = virtual_keyboard.emit_events(&[event]);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -235,7 +254,6 @@ fn handle_key_event(
     event: InputEvent,
     state: &Arc<Mutex<State>>,
     virtual_keyboard: &KeyboardOutput,
-    pressed: &mut HashSet<u16>,
 ) {
     let code = event.code();
     let value = event.value();
@@ -247,8 +265,8 @@ fn handle_key_event(
 
         let mut matched = BTreeMap::<String, (u64, ClientId)>::new();
         if value == 1 {
-            pressed.insert(code);
-            let pressed_set = pressed.iter().copied().collect::<BTreeSet<_>>();
+            state.pressed.insert(code);
+            let pressed_set = state.pressed.iter().copied().collect::<BTreeSet<_>>();
             for binding in state
                 .bindings
                 .iter()
@@ -269,10 +287,10 @@ fn handle_key_event(
                     .push_back(combo.clone());
             }
         } else if value == 0 {
-            pressed.remove(&code);
+            state.pressed.remove(&code);
         }
 
-        let after_pressed = pressed.iter().copied().collect::<BTreeSet<_>>();
+        let after_pressed = state.pressed.iter().copied().collect::<BTreeSet<_>>();
         let target = state
             .remaps
             .iter()
@@ -405,5 +423,37 @@ fn format_string_list(items: &[String]) -> String {
         "[]".to_string()
     } else {
         format!("[{}]", items.join(";"))
+    }
+}
+
+const MOUSE_BUTTONS: [Key; 5] = [
+    Key::BTN_LEFT,
+    Key::BTN_RIGHT,
+    Key::BTN_MIDDLE,
+    Key::BTN_SIDE,
+    Key::BTN_EXTRA,
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_pressed_state_matches_cross_device_combo() {
+        let mut state = State::default();
+        state.bindings.push(Binding {
+            client_id: 1,
+            order: 0,
+            original: "ctrl+back".to_string(),
+            keys: [Key::KEY_LEFTCTRL.code(), Key::BTN_SIDE.code()]
+                .into_iter()
+                .collect(),
+        });
+
+        state.pressed.insert(Key::KEY_LEFTCTRL.code());
+        state.pressed.insert(Key::BTN_SIDE.code());
+
+        let pressed_set = state.pressed.iter().copied().collect::<BTreeSet<_>>();
+        assert!(state.bindings[0].keys.is_subset(&pressed_set));
     }
 }

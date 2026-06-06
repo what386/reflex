@@ -20,7 +20,9 @@ reflex.signal.disconnect("myapp::status", fn)
 
 ```lua
 reflex.bind("ctrl+t", function() end)        -- key combo -> function
+reflex.bind("ctrl+back", function() end)     -- keyboard + mouse button combo
 reflex.hotkey("capslock", "ctrl")           -- key becomes another key
+reflex.hotkey("back", "forward")            -- mouse button remap
 reflex.sleep(500)                            -- pause for ms
 reflex.exit()                                -- request clean shutdown
 ```
@@ -110,4 +112,5 @@ reflex.table.filter({ 1, 2, 3 }, function(value) return value > 1 end)
 - Key names are lowercase strings: `"ctrl"`, `"shift"`, `"alt"`, `"win"`, `"enter"`, `"space"`, `"f1"`-`"f12"`, etc.
 - Combos are joined with `+`: `"ctrl+shift+t"`.
 - Mouse buttons: `"left"`, `"right"`, `"middle"`, `"back"`, `"forward"`.
+- Mouse-button binds and hotkeys use `"mouse_left"`, `"mouse_right"`, `"mouse_middle"`, `"back"`, and `"forward"`. In binds, `"left"` and `"right"` are arrow keys.
 - V1 intentionally does not include msgbox or window APIs.

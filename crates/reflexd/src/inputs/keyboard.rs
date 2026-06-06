@@ -1,6 +1,6 @@
 use crate::inputs::error::{KeypressError, Result};
 use crate::inputs::keys::{KeySpec, parse_combo, parse_key};
-use evdev::{AttributeSet, EventType, InputEvent, Key, uinput::VirtualDevice};
+use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType, uinput::VirtualDevice};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -86,10 +86,22 @@ fn virtual_keyboard(name: &str) -> Result<VirtualDevice> {
     for code in 1..=255 {
         keys.insert(Key::new(code));
     }
+    for button in MOUSE_BUTTONS {
+        keys.insert(button);
+    }
+    let axes = [
+        RelativeAxisType::REL_X,
+        RelativeAxisType::REL_Y,
+        RelativeAxisType::REL_WHEEL,
+        RelativeAxisType::REL_HWHEEL,
+    ]
+    .into_iter()
+    .collect::<AttributeSet<_>>();
 
     evdev::uinput::VirtualDeviceBuilder::new()?
         .name(name)
         .with_keys(&keys)?
+        .with_relative_axes(&axes)?
         .build()
         .map_err(KeypressError::from)
 }
@@ -107,6 +119,14 @@ const MODIFIERS: [Key; 8] = [
     Key::KEY_RIGHTALT,
     Key::KEY_LEFTMETA,
     Key::KEY_RIGHTMETA,
+];
+
+const MOUSE_BUTTONS: [Key; 5] = [
+    Key::BTN_LEFT,
+    Key::BTN_RIGHT,
+    Key::BTN_MIDDLE,
+    Key::BTN_SIDE,
+    Key::BTN_EXTRA,
 ];
 
 fn char_key(ch: char) -> Result<(Key, bool)> {
