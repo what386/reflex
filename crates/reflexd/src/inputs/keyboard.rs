@@ -1,93 +1,94 @@
 use crate::inputs::error::{KeypressError, Result};
 use crate::inputs::keys::{KeySpec, parse_combo, parse_key};
 use evdev::{AttributeSet, EventType, InputEvent, Key, uinput::VirtualDevice};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
-const KEYBOARD_NAME: &str = "reflex-keypress-keyboard";
+#[derive(Clone)]
+pub struct KeyboardOutput {
+    keyboard: Arc<Mutex<VirtualDevice>>,
+}
 
-static KEYBOARD: OnceLock<std::result::Result<Mutex<VirtualDevice>, String>> = OnceLock::new();
+impl KeyboardOutput {
+    pub fn new(name: &str) -> Result<Self> {
+        Ok(Self {
+            keyboard: Arc::new(Mutex::new(virtual_keyboard(name)?)),
+        })
+    }
 
-pub fn type_text(text: &str) -> Result<()> {
-    release_modifiers()?;
-    for ch in text.chars() {
-        let (key, shifted) = char_key(ch)?;
-        if shifted {
-            emit_key(Key::KEY_LEFTSHIFT, 1)?;
+    pub fn type_text(&self, text: &str) -> Result<()> {
+        self.release_modifiers()?;
+        for ch in text.chars() {
+            let (key, shifted) = char_key(ch)?;
+            if shifted {
+                self.emit_key(Key::KEY_LEFTSHIFT, 1)?;
+            }
+            self.tap_key(key)?;
+            if shifted {
+                self.emit_key(Key::KEY_LEFTSHIFT, 0)?;
+            }
         }
-        tap_key(key)?;
-        if shifted {
-            emit_key(Key::KEY_LEFTSHIFT, 0)?;
+        Ok(())
+    }
+
+    pub fn send_combo(&self, combo: &str) -> Result<()> {
+        self.release_modifiers()?;
+        let combo = parse_combo(combo)?;
+        let (modifiers, keys): (Vec<&KeySpec>, Vec<&KeySpec>) =
+            combo.keys.iter().partition(|key| is_modifier(key));
+
+        for modifier in &modifiers {
+            self.emit_key(modifier.evdev, 1)?;
         }
+        for key in &keys {
+            self.tap_key(key.evdev)?;
+        }
+        for modifier in modifiers.iter().rev() {
+            self.emit_key(modifier.evdev, 0)?;
+        }
+        Ok(())
     }
-    Ok(())
-}
 
-pub fn send_combo(combo: &str) -> Result<()> {
-    release_modifiers()?;
-    let combo = parse_combo(combo)?;
-    let (modifiers, keys): (Vec<&KeySpec>, Vec<&KeySpec>) =
-        combo.keys.iter().partition(|key| is_modifier(key));
-
-    for modifier in &modifiers {
-        emit_key(modifier.evdev, 1)?;
+    pub fn key_down(&self, key: &str) -> Result<()> {
+        self.emit_key(parse_key(key)?.evdev, 1)
     }
-    for key in &keys {
-        tap_key(key.evdev)?;
+
+    pub fn key_up(&self, key: &str) -> Result<()> {
+        self.emit_key(parse_key(key)?.evdev, 0)
     }
-    for modifier in modifiers.iter().rev() {
-        emit_key(modifier.evdev, 0)?;
+
+    pub fn emit_events(&self, events: &[InputEvent]) -> Result<()> {
+        self.keyboard
+            .lock()
+            .unwrap()
+            .emit(events)
+            .map_err(KeypressError::from)
     }
-    Ok(())
-}
 
-pub fn key_down(key: &str) -> Result<()> {
-    emit_key(parse_key(key)?.evdev, 1)
-}
-
-pub fn key_up(key: &str) -> Result<()> {
-    emit_key(parse_key(key)?.evdev, 0)
-}
-
-fn tap_key(key: Key) -> Result<()> {
-    emit_key(key, 1)?;
-    emit_key(key, 0)
-}
-
-fn release_modifiers() -> Result<()> {
-    for modifier in MODIFIERS {
-        emit_key(modifier, 0)?;
+    fn tap_key(&self, key: Key) -> Result<()> {
+        self.emit_key(key, 1)?;
+        self.emit_key(key, 0)
     }
-    Ok(())
+
+    fn release_modifiers(&self) -> Result<()> {
+        for modifier in MODIFIERS {
+            self.emit_key(modifier, 0)?;
+        }
+        Ok(())
+    }
+
+    fn emit_key(&self, key: Key, value: i32) -> Result<()> {
+        self.emit_events(&[InputEvent::new(EventType::KEY, key.code(), value)])
+    }
 }
 
-fn emit_key(key: Key, value: i32) -> Result<()> {
-    emit_keyboard(&[InputEvent::new(EventType::KEY, key.code(), value)])
-}
-
-fn emit_keyboard(events: &[InputEvent]) -> Result<()> {
-    let keyboard = KEYBOARD.get_or_init(|| {
-        virtual_keyboard()
-            .map(Mutex::new)
-            .map_err(|err| err.to_string())
-    });
-    let keyboard = keyboard
-        .as_ref()
-        .map_err(|err| KeypressError::Input(err.clone()))?;
-    keyboard
-        .lock()
-        .unwrap()
-        .emit(events)
-        .map_err(KeypressError::from)
-}
-
-fn virtual_keyboard() -> Result<VirtualDevice> {
+fn virtual_keyboard(name: &str) -> Result<VirtualDevice> {
     let mut keys = AttributeSet::<Key>::new();
     for code in 1..=255 {
         keys.insert(Key::new(code));
     }
 
     evdev::uinput::VirtualDeviceBuilder::new()?
-        .name(KEYBOARD_NAME)
+        .name(name)
         .with_keys(&keys)?
         .build()
         .map_err(KeypressError::from)

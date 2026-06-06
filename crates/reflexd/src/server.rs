@@ -1,4 +1,3 @@
-use crate::inputs::keyboard;
 use crate::inputs::linux::{ClientId, LinuxKeypress};
 use crate::inputs::mouse;
 use reflex_core::default_socket_path;
@@ -120,25 +119,25 @@ fn handle_request(
             if debug {
                 eprintln!("reflexd: debug key_type client={client_id} text={text:?}");
             }
-            keyboard::type_text(&text)
+            input.key_type(&text)
         }
         Request::KeySend { combo } => {
             if debug {
                 eprintln!("reflexd: debug key_send client={client_id} combo={combo}");
             }
-            keyboard::send_combo(&combo)
+            input.key_send(&combo)
         }
         Request::KeyDown { key } => {
             if debug {
                 eprintln!("reflexd: debug key_down client={client_id} key={key}");
             }
-            keyboard::key_down(&key)
+            input.key_down(&key)
         }
         Request::KeyUp { key } => {
             if debug {
                 eprintln!("reflexd: debug key_up client={client_id} key={key}");
             }
-            keyboard::key_up(&key)
+            input.key_up(&key)
         }
         Request::MouseMove { x, y, mode } => mouse::mouse_move(
             x,

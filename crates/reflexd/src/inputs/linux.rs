@@ -1,6 +1,7 @@
 use crate::inputs::error::{KeypressError, Result};
+use crate::inputs::keyboard::KeyboardOutput;
 use crate::inputs::keys::{KeyCombo, parse_combo};
-use evdev::{AttributeSet, Device, EventType, InputEvent, Key, uinput::VirtualDevice};
+use evdev::{Device, EventType, InputEvent, Key};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,7 @@ struct State {
     bindings: Vec<Binding>,
     pending_bindings: HashMap<ClientId, VecDeque<String>>,
     listener_started: bool,
+    keyboard: Option<KeyboardOutput>,
     debug: bool,
 }
 
@@ -111,6 +113,32 @@ impl LinuxKeypress {
         state.pending_bindings.remove(&client_id);
     }
 
+    pub fn key_type(&self, text: &str) -> Result<()> {
+        self.keyboard_output()?.type_text(text)
+    }
+
+    pub fn key_send(&self, combo: &str) -> Result<()> {
+        self.keyboard_output()?.send_combo(combo)
+    }
+
+    pub fn key_down(&self, key: &str) -> Result<()> {
+        self.keyboard_output()?.key_down(key)
+    }
+
+    pub fn key_up(&self, key: &str) -> Result<()> {
+        self.keyboard_output()?.key_up(key)
+    }
+
+    fn keyboard_output(&self) -> Result<KeyboardOutput> {
+        self.ensure_listener()?;
+        self.state
+            .lock()
+            .unwrap()
+            .keyboard
+            .clone()
+            .ok_or_else(|| KeypressError::Input("keyboard output is not available".to_string()))
+    }
+
     fn ensure_listener(&self) -> Result<()> {
         {
             let state = self.state.lock().unwrap();
@@ -120,7 +148,7 @@ impl LinuxKeypress {
         }
 
         let mut sources = keyboard_devices()?;
-        let virtual_keyboard = Arc::new(Mutex::new(virtual_keyboard()?));
+        let virtual_keyboard = KeyboardOutput::new(VIRTUAL_DEVICE_NAME)?;
 
         let mut grabbed: Vec<usize> = Vec::new();
         for index in 0..sources.len() {
@@ -139,6 +167,7 @@ impl LinuxKeypress {
         {
             let mut state = self.state.lock().unwrap();
             state.listener_started = true;
+            state.keyboard = Some(virtual_keyboard.clone());
         }
 
         for (path, device) in sources {
@@ -174,24 +203,11 @@ fn is_keyboard(device: &Device) -> bool {
     })
 }
 
-fn virtual_keyboard() -> Result<VirtualDevice> {
-    let mut keys = AttributeSet::<Key>::new();
-    for code in 1..=255 {
-        keys.insert(Key::new(code));
-    }
-
-    evdev::uinput::VirtualDeviceBuilder::new()?
-        .name(VIRTUAL_DEVICE_NAME)
-        .with_keys(&keys)?
-        .build()
-        .map_err(KeypressError::from)
-}
-
 fn spawn_reader(
     path: PathBuf,
     mut device: Device,
     state: Arc<Mutex<State>>,
-    virtual_keyboard: Arc<Mutex<VirtualDevice>>,
+    virtual_keyboard: KeyboardOutput,
 ) {
     thread::Builder::new()
         .name(format!("reflex-keypress-{}", path.display()))
@@ -218,7 +234,7 @@ fn spawn_reader(
 fn handle_key_event(
     event: InputEvent,
     state: &Arc<Mutex<State>>,
-    virtual_keyboard: &Arc<Mutex<VirtualDevice>>,
+    virtual_keyboard: &KeyboardOutput,
     pressed: &mut HashSet<u16>,
 ) {
     let code = event.code();
@@ -281,7 +297,7 @@ fn handle_key_event(
     };
 
     let mapped = InputEvent::new(EventType::KEY, target, value);
-    let _ = virtual_keyboard.lock().unwrap().emit(&[mapped]);
+    let _ = virtual_keyboard.emit_events(&[mapped]);
 }
 
 fn debug_log_registered_bind(state: &State, client_id: ClientId, order: u64, combo: &KeyCombo) {
