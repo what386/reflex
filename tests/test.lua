@@ -14,7 +14,7 @@ reflex.hotkey("t", "y")
 
 -- binds
 reflex.bind("ctrl+alt+t", function()
-    reflex.process.spawn("kitty")
+    reflex.key.send("u")
 end)
 
 reflex.bind("ctrl+alt+n", function()

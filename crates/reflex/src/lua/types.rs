@@ -1,7 +1,8 @@
 use crate::host::{Host, default_host};
 
 pub use crate::host::{
-    Host as ReflexHost, InputController, MouseMoveMode, ProcessController, Remapper,
+    ClipboardController, Host as ReflexHost, InputController, MouseMoveMode, ProcessController,
+    Remapper,
 };
 
 #[derive(Clone)]

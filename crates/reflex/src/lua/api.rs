@@ -18,6 +18,7 @@ pub(crate) fn register_api(lua: &Lua, state: Rc<RefCell<RuntimeState>>) -> Resul
     signal::register_lua(lua, &reflex, state.clone())?;
     register_key(lua, &reflex, state.clone())?;
     register_mouse(lua, &reflex, state.clone())?;
+    register_clipboard(lua, &reflex, state.clone())?;
     timer::register_lua(lua, &reflex, state.clone())?;
     register_process(lua, &reflex, state)?;
     stdlib::register(lua)?;
@@ -237,6 +238,61 @@ fn register_mouse(
         )
         .map_err(lua_err)?;
     reflex.set("mouse", mouse).map_err(lua_err)
+}
+
+fn register_clipboard(
+    lua: &Lua,
+    reflex: &Table,
+    state: Rc<RefCell<RuntimeState>>,
+) -> Result<(), LuaError> {
+    let clipboard = lua.create_table().map_err(lua_err)?;
+
+    let st = state.clone();
+    clipboard
+        .set(
+            "get",
+            lua.create_function(move |_, ()| {
+                st.borrow()
+                    .host()
+                    .clipboard
+                    .get()
+                    .map_err(mlua::Error::external)
+            })
+            .map_err(lua_err)?,
+        )
+        .map_err(lua_err)?;
+
+    let st = state.clone();
+    clipboard
+        .set(
+            "set",
+            lua.create_function(move |_, text: String| {
+                st.borrow()
+                    .host()
+                    .clipboard
+                    .set(&text)
+                    .map_err(mlua::Error::external)
+            })
+            .map_err(lua_err)?,
+        )
+        .map_err(lua_err)?;
+
+    let st = state;
+    clipboard
+        .set(
+            "clear",
+            lua.create_function(move |_, ()| {
+                st.borrow()
+                    .host()
+                    .clipboard
+                    .clear()
+                    .map_err(mlua::Error::external)
+            })
+            .map_err(lua_err)?,
+        )
+        .map_err(lua_err)?;
+
+    reflex.set("clipboard", clipboard).map_err(lua_err)
 }
 
 fn register_process(

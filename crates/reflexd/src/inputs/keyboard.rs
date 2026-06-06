@@ -8,6 +8,7 @@ const KEYBOARD_NAME: &str = "reflex-keypress-keyboard";
 static KEYBOARD: OnceLock<std::result::Result<Mutex<VirtualDevice>, String>> = OnceLock::new();
 
 pub fn type_text(text: &str) -> Result<()> {
+    release_modifiers()?;
     for ch in text.chars() {
         let (key, shifted) = char_key(ch)?;
         if shifted {
@@ -22,6 +23,7 @@ pub fn type_text(text: &str) -> Result<()> {
 }
 
 pub fn send_combo(combo: &str) -> Result<()> {
+    release_modifiers()?;
     let combo = parse_combo(combo)?;
     let (modifiers, keys): (Vec<&KeySpec>, Vec<&KeySpec>) =
         combo.keys.iter().partition(|key| is_modifier(key));
@@ -49,6 +51,13 @@ pub fn key_up(key: &str) -> Result<()> {
 fn tap_key(key: Key) -> Result<()> {
     emit_key(key, 1)?;
     emit_key(key, 0)
+}
+
+fn release_modifiers() -> Result<()> {
+    for modifier in MODIFIERS {
+        emit_key(modifier, 0)?;
+    }
+    Ok(())
 }
 
 fn emit_key(key: Key, value: i32) -> Result<()> {
@@ -85,18 +94,19 @@ fn virtual_keyboard() -> Result<VirtualDevice> {
 }
 
 fn is_modifier(key: &KeySpec) -> bool {
-    matches!(
-        key.evdev,
-        Key::KEY_LEFTCTRL
-            | Key::KEY_RIGHTCTRL
-            | Key::KEY_LEFTSHIFT
-            | Key::KEY_RIGHTSHIFT
-            | Key::KEY_LEFTALT
-            | Key::KEY_RIGHTALT
-            | Key::KEY_LEFTMETA
-            | Key::KEY_RIGHTMETA
-    )
+    MODIFIERS.contains(&key.evdev)
 }
+
+const MODIFIERS: [Key; 8] = [
+    Key::KEY_LEFTCTRL,
+    Key::KEY_RIGHTCTRL,
+    Key::KEY_LEFTSHIFT,
+    Key::KEY_RIGHTSHIFT,
+    Key::KEY_LEFTALT,
+    Key::KEY_RIGHTALT,
+    Key::KEY_LEFTMETA,
+    Key::KEY_RIGHTMETA,
+];
 
 fn char_key(ch: char) -> Result<(Key, bool)> {
     let key = match ch {
@@ -157,4 +167,19 @@ fn char_key(ch: char) -> Result<(Key, bool)> {
         }
     };
     Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inputs::keys::parse_key;
+
+    #[test]
+    fn recognizes_modifier_keys() {
+        for name in ["ctrl", "rightctrl", "shift", "alt", "rightalt", "win"] {
+            assert!(is_modifier(&parse_key(name).unwrap()));
+        }
+
+        assert!(!is_modifier(&parse_key("t").unwrap()));
+    }
 }

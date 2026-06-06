@@ -46,6 +46,16 @@ reflex.mouse.up("left")
 reflex.mouse.scroll(-1)                      -- positive = up
 ```
 
+## reflex.clipboard
+
+Clipboard APIs are text-only. On Linux, Reflex uses `wl-copy`/`wl-paste`, `xclip`, or `xsel`, depending on the current session and installed tools.
+
+```lua
+reflex.clipboard.set("Hello, World!")
+local text = reflex.clipboard.get()
+reflex.clipboard.clear()
+```
+
 ## reflex.timer
 
 ```lua
@@ -65,14 +75,13 @@ end)
 
 ## reflex.process
 
-Process APIs are not handled by `reflexd` and are unsupported by the default daemon-backed runner for now.
+Process APIs are handled by the local runner, not `reflexd`. `find()` and `pkill()` match process names from `/proc`, including the executable basename from the command line.
 
 ```lua
-reflex.process.spawn("kitty")
-reflex.process.spawn("cmd.exe", "/c", "echo", "hi")
+local pid = reflex.process.spawn("kitty")
 reflex.process.find("kitty")                 -- pid or nil
 reflex.process.kill(pid)
-reflex.process.pkill("kitty")
+reflex.process.pkill("kitty")                -- number of matched processes signaled
 ```
 
 ## reflex.str
@@ -101,4 +110,4 @@ reflex.table.filter({ 1, 2, 3 }, function(value) return value > 1 end)
 - Key names are lowercase strings: `"ctrl"`, `"shift"`, `"alt"`, `"win"`, `"enter"`, `"space"`, `"f1"`-`"f12"`, etc.
 - Combos are joined with `+`: `"ctrl+shift+t"`.
 - Mouse buttons: `"left"`, `"right"`, `"middle"`, `"back"`, `"forward"`.
-- V1 intentionally does not include clipboard, msgbox, path, or window APIs.
+- V1 intentionally does not include msgbox or window APIs.

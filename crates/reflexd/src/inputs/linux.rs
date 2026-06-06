@@ -1,5 +1,5 @@
 use crate::inputs::error::{KeypressError, Result};
-use crate::inputs::keys::parse_combo;
+use crate::inputs::keys::{KeyCombo, parse_combo};
 use evdev::{AttributeSet, Device, EventType, InputEvent, Key, uinput::VirtualDevice};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -21,6 +21,7 @@ struct State {
     bindings: Vec<Binding>,
     pending_bindings: HashMap<ClientId, VecDeque<String>>,
     listener_started: bool,
+    debug: bool,
 }
 
 #[derive(Clone)]
@@ -44,12 +45,19 @@ impl LinuxKeypress {
         Self::default()
     }
 
+    pub fn new_with_debug(debug: bool) -> Self {
+        let keypress = Self::new();
+        keypress.state.lock().unwrap().debug = debug;
+        keypress
+    }
+
     pub fn register_bind_for(&self, client_id: ClientId, combo: &str) -> Result<()> {
         let combo = parse_combo(combo)?;
         {
             let mut state = self.state.lock().unwrap();
             let order = state.next_order;
             state.next_order += 1;
+            debug_log_registered_bind(&state, client_id, order, &combo);
             state.bindings.push(Binding {
                 client_id,
                 order,
@@ -67,6 +75,13 @@ impl LinuxKeypress {
             let mut state = self.state.lock().unwrap();
             let order = state.next_order;
             state.next_order += 1;
+            if state.debug {
+                eprintln!(
+                    "reflexd: debug remap client={client_id} order={order} from={} to={}",
+                    key_label(from.evdev.code()),
+                    key_label(to.evdev.code())
+                );
+            }
             state.remaps.push(Remap {
                 client_id,
                 order,
@@ -211,11 +226,13 @@ fn handle_key_event(
 
     let target = {
         let mut state = state.lock().unwrap();
+        let debug = state.debug;
+        let action = key_action(value);
 
+        let mut matched = BTreeMap::<String, (u64, ClientId)>::new();
         if value == 1 {
             pressed.insert(code);
             let pressed_set = pressed.iter().copied().collect::<BTreeSet<_>>();
-            let mut matched = BTreeMap::<String, (u64, ClientId)>::new();
             for binding in state
                 .bindings
                 .iter()
@@ -228,26 +245,149 @@ fn handle_key_event(
                     *entry = (binding.order, binding.client_id);
                 }
             }
-            for (combo, (_, client_id)) in matched {
+            for (combo, (_, client_id)) in &matched {
                 state
                     .pending_bindings
-                    .entry(client_id)
+                    .entry(*client_id)
                     .or_default()
-                    .push_back(combo);
+                    .push_back(combo.clone());
             }
         } else if value == 0 {
             pressed.remove(&code);
         }
 
-        state
+        let after_pressed = pressed.iter().copied().collect::<BTreeSet<_>>();
+        let target = state
             .remaps
             .iter()
             .filter(|remap| remap.from == code)
             .max_by_key(|remap| remap.order)
             .map(|remap| remap.to)
-            .unwrap_or(code)
+            .unwrap_or(code);
+
+        if debug {
+            debug_log_key_event(DebugKeyEvent {
+                code,
+                target,
+                value,
+                action,
+                after_pressed: &after_pressed,
+                bindings: &state.bindings,
+                matched: &matched,
+            });
+        }
+
+        target
     };
 
     let mapped = InputEvent::new(EventType::KEY, target, value);
     let _ = virtual_keyboard.lock().unwrap().emit(&[mapped]);
+}
+
+fn debug_log_registered_bind(state: &State, client_id: ClientId, order: u64, combo: &KeyCombo) {
+    if !state.debug {
+        return;
+    }
+
+    eprintln!(
+        "reflexd: debug bind client={client_id} order={} combo={} keys={}",
+        order,
+        combo.original,
+        format_key_set(&combo.evdev_set())
+    );
+}
+
+struct DebugKeyEvent<'a> {
+    code: u16,
+    target: u16,
+    value: i32,
+    action: &'static str,
+    after_pressed: &'a BTreeSet<u16>,
+    bindings: &'a [Binding],
+    matched: &'a BTreeMap<String, (u64, ClientId)>,
+}
+
+fn debug_log_key_event(event: DebugKeyEvent<'_>) {
+    if event.value == 2 {
+        return;
+    }
+
+    let matches = event
+        .matched
+        .iter()
+        .map(|(combo, (_, client_id))| format!("{combo}@{client_id}"))
+        .collect::<Vec<_>>();
+    let nearby = nearby_combo_status(event.bindings, event.after_pressed);
+
+    eprintln!(
+        "reflexd: debug key {} {} mapped={} pressed={} matched={} nearby={}",
+        event.action,
+        key_label(event.code),
+        key_label(event.target),
+        format_key_set(event.after_pressed),
+        format_string_list(&matches),
+        format_string_list(&nearby)
+    );
+}
+
+fn nearby_combo_status(bindings: &[Binding], pressed: &BTreeSet<u16>) -> Vec<String> {
+    bindings
+        .iter()
+        .filter_map(|binding| {
+            let pressed_count = binding.keys.intersection(pressed).count();
+            if pressed_count == 0 {
+                return None;
+            }
+
+            let missing = binding
+                .keys
+                .difference(pressed)
+                .copied()
+                .collect::<BTreeSet<_>>();
+            if missing.len() > 2 {
+                return None;
+            }
+
+            Some(format!(
+                "{} missing={}",
+                binding.original,
+                format_key_set(&missing)
+            ))
+        })
+        .collect()
+}
+
+fn key_action(value: i32) -> &'static str {
+    match value {
+        0 => "up",
+        1 => "down",
+        2 => "repeat",
+        _ => "other",
+    }
+}
+
+fn key_label(code: u16) -> String {
+    format!("{:?}({code})", Key::new(code))
+}
+
+fn format_key_set(keys: &BTreeSet<u16>) -> String {
+    if keys.is_empty() {
+        return "[]".to_string();
+    }
+
+    let keys = keys
+        .iter()
+        .copied()
+        .map(key_label)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{keys}]")
+}
+
+fn format_string_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[{}]", items.join(";"))
+    }
 }

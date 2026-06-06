@@ -393,6 +393,7 @@ dependencies = [
 name = "reflexd"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "evdev",
  "reflex-core",
  "serde_json",

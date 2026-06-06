@@ -1,6 +1,6 @@
+use crate::lua::api::register_api;
 use crate::lua::components::signal::{self, SignalState};
 use crate::lua::components::timer::TimerState;
-use crate::lua::api::register_api;
 use crate::lua::errors::{ErrorKind, LuaError};
 use crate::lua::sandbox::configure_sandbox;
 use crate::lua::types::RuntimeConfig;
