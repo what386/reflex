@@ -6,5 +6,6 @@ edition = "2024"
 [dependencies]
 clap = { workspace = true }
 mlua = { workspace = true }
+notify-rust = "4.17.0"
 reflex-core = { path = "../reflex-core" }
 serde_json = { workspace = true }

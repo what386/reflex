@@ -23,8 +23,22 @@ reflex.bind("ctrl+t", function() end)        -- key combo -> function
 reflex.bind("ctrl+back", function() end)     -- keyboard + mouse button combo
 reflex.hotkey("capslock", "ctrl")           -- key becomes another key
 reflex.hotkey("back", "forward")            -- mouse button remap
+reflex.notify("Title", "Body")              -- desktop notification
 reflex.sleep(500)                            -- pause for ms
 reflex.exit()                                -- request clean shutdown
+```
+
+`reflex.notify()` sends a desktop notification through the Freedesktop notification service.
+
+```lua
+reflex.notify({
+  title = "Build finished",
+  body = "reflex compiled successfully",
+  urgency = "normal",                        -- "low", "normal", "critical"
+  timeout = 5000,                            -- ms; 0 = never, negative = server default
+  icon = "dialog-information",
+  app_name = "reflex",
+})
 ```
 
 ## reflex.key
@@ -113,4 +127,4 @@ reflex.table.filter({ 1, 2, 3 }, function(value) return value > 1 end)
 - Combos are joined with `+`: `"ctrl+shift+t"`.
 - Mouse buttons: `"left"`, `"right"`, `"middle"`, `"back"`, `"forward"`.
 - Mouse-button binds and hotkeys use `"mouse_left"`, `"mouse_right"`, `"mouse_middle"`, `"back"`, and `"forward"`. In binds, `"left"` and `"right"` are arrow keys.
-- V1 intentionally does not include msgbox or window APIs.
+- V1 intentionally does not include window APIs.

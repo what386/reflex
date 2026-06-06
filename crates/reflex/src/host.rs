@@ -1,5 +1,6 @@
 use crate::lua::ErrorKind;
 use crate::lua::LuaError;
+use notify_rust::{Notification, Timeout, Urgency};
 pub use reflex_core::MouseMoveMode;
 use std::env;
 use std::ffi::OsStr;
@@ -15,6 +16,7 @@ pub struct Host {
     pub input: Arc<dyn InputController>,
     pub process: Arc<dyn ProcessController>,
     pub clipboard: Arc<dyn ClipboardController>,
+    pub notifications: Arc<dyn NotificationController>,
 }
 
 pub trait Remapper: Send + Sync {
@@ -54,6 +56,28 @@ pub trait ClipboardController: Send + Sync {
     fn clear(&self) -> Result<(), LuaError>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotificationUrgency {
+    Low,
+    Normal,
+    Critical,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationOptions {
+    pub title: String,
+    pub body: Option<String>,
+    pub app_name: Option<String>,
+    pub icon: Option<String>,
+    pub urgency: NotificationUrgency,
+    pub timeout: Option<i32>,
+}
+
+pub trait NotificationController: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn notify(&self, options: &NotificationOptions) -> Result<(), LuaError>;
+}
+
 pub fn default_host() -> Host {
     unsupported_host()
 }
@@ -70,6 +94,7 @@ pub fn daemon_host() -> Result<Host, LuaError> {
         input: daemon.clone(),
         process: Arc::new(LocalProcessController),
         clipboard: Arc::new(CommandClipboard),
+        notifications: Arc::new(DesktopNotificationController),
     })
 }
 
@@ -81,6 +106,7 @@ fn host(name: &'static str) -> Host {
         input: unsupported.clone(),
         process: Arc::new(LocalProcessController),
         clipboard: Arc::new(CommandClipboard),
+        notifications: Arc::new(DesktopNotificationController),
     }
 }
 
@@ -389,6 +415,41 @@ impl ClipboardController for CommandClipboard {
 
     fn clear(&self) -> Result<(), LuaError> {
         self.set("")
+    }
+}
+
+struct DesktopNotificationController;
+
+impl NotificationController for DesktopNotificationController {
+    fn name(&self) -> &'static str {
+        "desktop"
+    }
+
+    fn notify(&self, options: &NotificationOptions) -> Result<(), LuaError> {
+        let mut notification = Notification::new();
+        notification
+            .appname(options.app_name.as_deref().unwrap_or("reflex"))
+            .summary(&options.title)
+            .urgency(match options.urgency {
+                NotificationUrgency::Low => Urgency::Low,
+                NotificationUrgency::Normal => Urgency::Normal,
+                NotificationUrgency::Critical => Urgency::Critical,
+            });
+
+        if let Some(body) = &options.body {
+            notification.body(body);
+        }
+        if let Some(icon) = &options.icon {
+            notification.icon(icon);
+        }
+        if let Some(timeout) = options.timeout {
+            notification.timeout(Timeout::from(timeout));
+        }
+
+        notification
+            .show()
+            .map(|_| ())
+            .map_err(|err| host_err(format!("failed to send notification: {err}")))
     }
 }
 
