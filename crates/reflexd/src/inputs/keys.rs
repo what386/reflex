@@ -1,5 +1,6 @@
 use crate::inputs::error::{KeypressError, Result};
 use evdev::Key as EvdevKey;
+use reflex_core::canonical_key_name;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,46 +44,45 @@ pub fn parse_key(name: &str) -> Result<KeySpec> {
 }
 
 fn parse_key_inner(name: &str) -> Option<KeySpec> {
-    let normalized = normalize(name);
-    let key = match normalized.as_str() {
-        "ctrl" | "control" | "leftctrl" | "lctrl" => spec("ctrl", EvdevKey::KEY_LEFTCTRL),
-        "rightctrl" | "rctrl" => spec("rightctrl", EvdevKey::KEY_RIGHTCTRL),
-        "shift" | "leftshift" | "lshift" => spec("shift", EvdevKey::KEY_LEFTSHIFT),
-        "rightshift" | "rshift" => spec("rightshift", EvdevKey::KEY_RIGHTSHIFT),
-        "alt" | "leftalt" | "lalt" => spec("alt", EvdevKey::KEY_LEFTALT),
-        "rightalt" | "ralt" | "altgr" => spec("rightalt", EvdevKey::KEY_RIGHTALT),
-        "win" | "super" | "meta" | "cmd" => spec("win", EvdevKey::KEY_LEFTMETA),
-        "enter" | "return" => spec("enter", EvdevKey::KEY_ENTER),
-        "esc" | "escape" => spec("escape", EvdevKey::KEY_ESC),
+    let key = match canonical_key_name(name)? {
+        "ctrl" => spec("ctrl", EvdevKey::KEY_LEFTCTRL),
+        "rightctrl" => spec("rightctrl", EvdevKey::KEY_RIGHTCTRL),
+        "shift" => spec("shift", EvdevKey::KEY_LEFTSHIFT),
+        "rightshift" => spec("rightshift", EvdevKey::KEY_RIGHTSHIFT),
+        "alt" => spec("alt", EvdevKey::KEY_LEFTALT),
+        "rightalt" => spec("rightalt", EvdevKey::KEY_RIGHTALT),
+        "win" => spec("win", EvdevKey::KEY_LEFTMETA),
+        "enter" => spec("enter", EvdevKey::KEY_ENTER),
+        "escape" => spec("escape", EvdevKey::KEY_ESC),
         "space" => spec("space", EvdevKey::KEY_SPACE),
         "tab" => spec("tab", EvdevKey::KEY_TAB),
         "backspace" => spec("backspace", EvdevKey::KEY_BACKSPACE),
-        "delete" | "del" => spec("delete", EvdevKey::KEY_DELETE),
+        "delete" => spec("delete", EvdevKey::KEY_DELETE),
         "up" => spec("up", EvdevKey::KEY_UP),
         "down" => spec("down", EvdevKey::KEY_DOWN),
         "left" => spec("left", EvdevKey::KEY_LEFT),
         "right" => spec("right", EvdevKey::KEY_RIGHT),
-        "mouseleft" => spec("mouse_left", EvdevKey::BTN_LEFT),
-        "mouseright" => spec("mouse_right", EvdevKey::BTN_RIGHT),
-        "mousemiddle" => spec("mouse_middle", EvdevKey::BTN_MIDDLE),
+        "mouse_left" => spec("mouse_left", EvdevKey::BTN_LEFT),
+        "mouse_right" => spec("mouse_right", EvdevKey::BTN_RIGHT),
+        "mouse_middle" => spec("mouse_middle", EvdevKey::BTN_MIDDLE),
         "back" => spec("back", EvdevKey::BTN_SIDE),
         "forward" => spec("forward", EvdevKey::BTN_EXTRA),
         "home" => spec("home", EvdevKey::KEY_HOME),
         "end" => spec("end", EvdevKey::KEY_END),
-        "pageup" | "pgup" => spec("pageup", EvdevKey::KEY_PAGEUP),
-        "pagedown" | "pgdn" => spec("pagedown", EvdevKey::KEY_PAGEDOWN),
+        "pageup" => spec("pageup", EvdevKey::KEY_PAGEUP),
+        "pagedown" => spec("pagedown", EvdevKey::KEY_PAGEDOWN),
         "capslock" => spec("capslock", EvdevKey::KEY_CAPSLOCK),
-        "minus" | "-" => spec("minus", EvdevKey::KEY_MINUS),
-        "equal" | "=" => spec("equal", EvdevKey::KEY_EQUAL),
-        "comma" | "," => spec("comma", EvdevKey::KEY_COMMA),
-        "dot" | "period" | "." => spec("dot", EvdevKey::KEY_DOT),
-        "slash" | "/" => spec("slash", EvdevKey::KEY_SLASH),
-        "backslash" | "\\" => spec("backslash", EvdevKey::KEY_BACKSLASH),
-        "semicolon" | ";" => spec("semicolon", EvdevKey::KEY_SEMICOLON),
-        "apostrophe" | "'" => spec("apostrophe", EvdevKey::KEY_APOSTROPHE),
-        "grave" | "`" => spec("grave", EvdevKey::KEY_GRAVE),
-        "[" | "leftbrace" | "leftbracket" => spec("leftbrace", EvdevKey::KEY_LEFTBRACE),
-        "]" | "rightbrace" | "rightbracket" => spec("rightbrace", EvdevKey::KEY_RIGHTBRACE),
+        "minus" => spec("minus", EvdevKey::KEY_MINUS),
+        "equal" => spec("equal", EvdevKey::KEY_EQUAL),
+        "comma" => spec("comma", EvdevKey::KEY_COMMA),
+        "dot" => spec("dot", EvdevKey::KEY_DOT),
+        "slash" => spec("slash", EvdevKey::KEY_SLASH),
+        "backslash" => spec("backslash", EvdevKey::KEY_BACKSLASH),
+        "semicolon" => spec("semicolon", EvdevKey::KEY_SEMICOLON),
+        "apostrophe" => spec("apostrophe", EvdevKey::KEY_APOSTROPHE),
+        "grave" => spec("grave", EvdevKey::KEY_GRAVE),
+        "leftbrace" => spec("leftbrace", EvdevKey::KEY_LEFTBRACE),
+        "rightbrace" => spec("rightbrace", EvdevKey::KEY_RIGHTBRACE),
         "0" => spec("0", EvdevKey::KEY_0),
         "1" => spec("1", EvdevKey::KEY_1),
         "2" => spec("2", EvdevKey::KEY_2),
@@ -131,13 +131,9 @@ fn parse_key_inner(name: &str) -> Option<KeySpec> {
         "f10" => spec("f10", EvdevKey::KEY_F10),
         "f11" => spec("f11", EvdevKey::KEY_F11),
         "f12" => spec("f12", EvdevKey::KEY_F12),
-        _ => return None,
+        _ => unreachable!("canonical_key_name returned an unmapped key"),
     };
     Some(key)
-}
-
-fn normalize(name: &str) -> String {
-    name.trim().to_ascii_lowercase().replace(['_', ' '], "")
 }
 
 fn spec(name: &'static str, evdev: EvdevKey) -> KeySpec {
@@ -193,5 +189,14 @@ mod tests {
         for name in KEY_NAMES {
             parse_key(name).unwrap_or_else(|err| panic!("{name} should parse: {err}"));
         }
+    }
+
+    #[test]
+    fn uppercase_key_names_stay_physical_for_binds() {
+        let combo = parse_combo("H").unwrap();
+
+        assert_eq!(combo.evdev_set().len(), 1);
+        assert!(combo.evdev_set().contains(&EvdevKey::KEY_H.code()));
+        assert!(!combo.evdev_set().contains(&EvdevKey::KEY_LEFTSHIFT.code()));
     }
 }

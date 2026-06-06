@@ -16,7 +16,7 @@ reflex check script.lua
 reflex keys
 ```
 
-`run -d` starts a script in the background and returns after it registers with `reflexd`. `list`, `stop`, and `status` talk to `reflexd`. `check` loads a script with a dry-run host, so it does not connect to `reflexd` or perform host side effects.
+`run -d` starts a script in the background and returns after it registers with `reflexd`. `list`, `stop`, and `status` talk to `reflexd`. `check` loads a script with a dry-run host, so it does not connect to `reflexd` or perform host side effects. It also validates key names and combos passed to `bind`, `hotkey`, `key.send`, `key.down`, and `key.up`.
 
 ## reflex.signal
 
@@ -63,6 +63,8 @@ reflex.key.send("ctrl+c")
 reflex.key.down("shift")
 reflex.key.up("shift")
 ```
+
+`reflex.key.send("H")` sends the physical `h` key and warns with a `shift+h` hint. Use explicit combos such as `reflex.key.send("shift+h")` for capitals, or `reflex.key.type("Hello")` for text.
 
 ## reflex.mouse
 

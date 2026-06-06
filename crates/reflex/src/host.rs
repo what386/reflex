@@ -2,6 +2,7 @@ use crate::lua::ErrorKind;
 use crate::lua::LuaError;
 use notify_rust::{Notification, Timeout, Urgency};
 pub use reflex_core::MouseMoveMode;
+use reflex_core::{key_send_warning, validate_key_combo, validate_key_name};
 use std::env;
 use std::ffi::OsStr;
 use std::io::{ErrorKind as IoErrorKind, Write};
@@ -227,12 +228,13 @@ impl Remapper for CheckController {
         "check"
     }
 
-    fn register_bind(&self, _: &str) -> Result<(), LuaError> {
-        Ok(())
+    fn register_bind(&self, combo: &str) -> Result<(), LuaError> {
+        check_key_combo("reflex.bind", combo)
     }
 
-    fn remap_key(&self, _: &str, _: &str) -> Result<(), LuaError> {
-        Ok(())
+    fn remap_key(&self, from: &str, to: &str) -> Result<(), LuaError> {
+        check_key_name("reflex.hotkey from", from)?;
+        check_key_name("reflex.hotkey to", to)
     }
 }
 
@@ -245,16 +247,19 @@ impl InputController for CheckController {
         Ok(())
     }
 
-    fn key_tap(&self, _: &str) -> Result<(), LuaError> {
-        Ok(())
+    fn key_tap(&self, combo: &str) -> Result<(), LuaError> {
+        if let Some(warning) = key_send_warning(combo) {
+            eprintln!("reflex check: warning: {warning}");
+        }
+        check_key_combo("reflex.key.send", combo)
     }
 
-    fn key_down(&self, _: &str) -> Result<(), LuaError> {
-        Ok(())
+    fn key_down(&self, key: &str) -> Result<(), LuaError> {
+        check_key_name("reflex.key.down", key)
     }
 
-    fn key_up(&self, _: &str) -> Result<(), LuaError> {
-        Ok(())
+    fn key_up(&self, key: &str) -> Result<(), LuaError> {
+        check_key_name("reflex.key.up", key)
     }
 
     fn mouse_move(&self, _: i32, _: i32, _: MouseMoveMode) -> Result<(), LuaError> {
@@ -276,6 +281,24 @@ impl InputController for CheckController {
     fn mouse_scroll(&self, _: i32) -> Result<(), LuaError> {
         Ok(())
     }
+}
+
+fn check_key_combo(operation: &str, combo: &str) -> Result<(), LuaError> {
+    validate_key_combo(combo).map_err(|err| {
+        LuaError::new(
+            ErrorKind::Runtime,
+            format!("{operation} has invalid key combo {combo:?}: {err}"),
+        )
+    })
+}
+
+fn check_key_name(operation: &str, key: &str) -> Result<(), LuaError> {
+    validate_key_name(key).map_err(|err| {
+        LuaError::new(
+            ErrorKind::Runtime,
+            format!("{operation} has invalid key {key:?}: {err}"),
+        )
+    })
 }
 
 impl ProcessController for CheckController {
@@ -742,5 +765,35 @@ mod tests {
                 timeout: None,
             })
             .unwrap();
+    }
+
+    #[test]
+    fn check_host_validates_key_inputs() {
+        let host = check_host();
+
+        let err = host.input.key_tap("Hello").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Runtime);
+        assert!(err.msg.contains("reflex.key.send"));
+        assert!(err.msg.contains("unknown key: Hello"));
+
+        let err = host.input.key_down("ctrl+t").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Runtime);
+        assert!(err.msg.contains("reflex.key.down"));
+
+        let err = host.remapping.register_bind("ctrl+wat").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Runtime);
+        assert!(err.msg.contains("reflex.bind"));
+
+        let err = host.remapping.remap_key("capslock", "wat").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Runtime);
+        assert!(err.msg.contains("reflex.hotkey to"));
+    }
+
+    #[test]
+    fn check_host_keeps_uppercase_key_send_physical_but_valid() {
+        let host = check_host();
+
+        host.input.key_tap("H").unwrap();
+        host.remapping.register_bind("H").unwrap();
     }
 }

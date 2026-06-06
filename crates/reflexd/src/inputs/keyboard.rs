@@ -1,6 +1,7 @@
 use crate::inputs::error::{KeypressError, Result};
 use crate::inputs::keys::{KeySpec, parse_combo, parse_key};
 use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType, uinput::VirtualDevice};
+use reflex_core::key_send_warning;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -32,18 +33,19 @@ impl KeyboardOutput {
 
     pub fn send_combo(&self, combo: &str) -> Result<()> {
         self.release_modifiers()?;
-        let combo = parse_combo(combo)?;
-        let (modifiers, keys): (Vec<&KeySpec>, Vec<&KeySpec>) =
-            combo.keys.iter().partition(|key| is_modifier(key));
+        if let Some(warning) = key_send_warning(combo) {
+            eprintln!("reflexd: warning {warning}");
+        }
+        let (modifiers, keys) = send_combo_keys(combo)?;
 
         for modifier in &modifiers {
-            self.emit_key(modifier.evdev, 1)?;
+            self.emit_key(*modifier, 1)?;
         }
         for key in &keys {
-            self.tap_key(key.evdev)?;
+            self.tap_key(*key)?;
         }
         for modifier in modifiers.iter().rev() {
-            self.emit_key(modifier.evdev, 0)?;
+            self.emit_key(*modifier, 0)?;
         }
         Ok(())
     }
@@ -108,6 +110,16 @@ fn virtual_keyboard(name: &str) -> Result<VirtualDevice> {
 
 fn is_modifier(key: &KeySpec) -> bool {
     MODIFIERS.contains(&key.evdev)
+}
+
+fn send_combo_keys(combo: &str) -> Result<(Vec<Key>, Vec<Key>)> {
+    let combo = parse_combo(combo)?;
+    let (modifiers, keys): (Vec<&KeySpec>, Vec<&KeySpec>) =
+        combo.keys.iter().partition(|key| is_modifier(key));
+    Ok((
+        modifiers.into_iter().map(|key| key.evdev).collect(),
+        keys.into_iter().map(|key| key.evdev).collect(),
+    ))
 }
 
 const MODIFIERS: [Key; 8] = [
@@ -237,5 +249,46 @@ mod tests {
     fn capital_letters_use_shifted_base_key() {
         assert_eq!(char_key('H').unwrap(), (Key::KEY_H, true));
         assert_eq!(char_key('h').unwrap(), (Key::KEY_H, false));
+    }
+
+    #[test]
+    fn send_combo_keeps_single_capital_letter_physical() {
+        let (modifiers, keys) = send_combo_keys("H").unwrap();
+
+        assert!(modifiers.is_empty());
+        assert_eq!(keys, vec![Key::KEY_H]);
+    }
+
+    #[test]
+    fn send_combo_keeps_lowercase_and_regular_combos_physical() {
+        let (modifiers, keys) = send_combo_keys("h").unwrap();
+        assert!(modifiers.is_empty());
+        assert_eq!(keys, vec![Key::KEY_H]);
+
+        let (modifiers, keys) = send_combo_keys("ctrl+h").unwrap();
+        assert_eq!(modifiers, vec![Key::KEY_LEFTCTRL]);
+        assert_eq!(keys, vec![Key::KEY_H]);
+    }
+
+    #[test]
+    fn send_combo_rejects_multi_character_text() {
+        assert!(send_combo_keys("Hello").is_err());
+    }
+
+    #[test]
+    fn uppercase_send_warning_suggests_shifted_combo() {
+        let warning = key_send_warning("H").unwrap();
+        assert!(warning.contains("shift+h"));
+
+        let warning = key_send_warning("ctrl+H").unwrap();
+        assert!(warning.contains("ctrl+shift+h"));
+
+        assert!(key_send_warning("ctrl+shift+h").is_none());
+    }
+
+    #[test]
+    fn uppercase_send_warning_points_text_at_type() {
+        let warning = key_send_warning("Hello").unwrap();
+        assert!(warning.contains("key.type"));
     }
 }
