@@ -36,13 +36,13 @@ end)
 
 ticker:start()
 
-reflex.timer.once(70, function()
+reflex.timer.after(70, function()
     ticker:pause()
     assert(ticks > 0, "repeating timer should have fired before pause")
     ticker:resume()
 end)
 
-reflex.timer.once(130, function()
+reflex.timer.after(130, function()
     ticker:clear()
     assert(ticks > 0, "repeating timer should have fired before clear")
     print("signals_timers: passed")

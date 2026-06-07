@@ -109,7 +109,7 @@ pub(crate) fn register_lua(
     let st = state.clone();
     timer
         .set(
-            "once",
+            "after",
             lua.create_function(move |_, (ms, callback): (u64, Function)| {
                 st.borrow_mut().timers.add(ms, callback, false, true)
             })
@@ -163,4 +163,41 @@ impl UserData for TimerEntry {
 
 fn lua_err(err: mlua::Error) -> LuaError {
     LuaError::new(ErrorKind::Runtime, err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::host::check_host;
+    use crate::lua::runtime::Runtime;
+    use crate::lua::types::RuntimeConfig;
+    use std::time::Duration;
+
+    #[test]
+    fn after_schedules_active_one_shot_timer() {
+        let runtime = Runtime::new(RuntimeConfig { host: check_host() }).unwrap();
+        runtime
+            .run_str(
+                r#"
+                timer_after_fired = 0
+                reflex.timer.after(1, function()
+                    timer_after_fired = timer_after_fired + 1
+                end)
+                "#,
+                "timer-after-test",
+            )
+            .unwrap();
+
+        std::thread::sleep(Duration::from_millis(20));
+        runtime.poll_timers().unwrap();
+        runtime.poll_timers().unwrap();
+
+        assert_eq!(
+            runtime
+                .lua()
+                .globals()
+                .get::<i64>("timer_after_fired")
+                .unwrap(),
+            1
+        );
+    }
 }

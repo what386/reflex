@@ -104,7 +104,7 @@ t:pause()
 t:resume()
 t:clear()
 
-reflex.timer.once(2000, function()
+reflex.timer.after(2000, function()
   print("done")
 end)
 ```
