@@ -16,7 +16,11 @@ impl KeyboardOutput {
         })
     }
 
-    pub fn type_text(&self, text: &str) -> Result<()> {
+    pub fn type_text_restoring_modifiers(
+        &self,
+        text: &str,
+        restore_modifiers: &[Key],
+    ) -> Result<()> {
         self.release_modifiers()?;
         for ch in text.chars() {
             let (key, shifted) = char_key(ch)?;
@@ -28,10 +32,15 @@ impl KeyboardOutput {
                 self.emit_key(Key::KEY_LEFTSHIFT, 0)?;
             }
         }
+        self.restore_modifiers(restore_modifiers)?;
         Ok(())
     }
 
-    pub fn send_combo(&self, combo: &str) -> Result<()> {
+    pub fn send_combo_restoring_modifiers(
+        &self,
+        combo: &str,
+        restore_modifiers: &[Key],
+    ) -> Result<()> {
         self.release_modifiers()?;
         if let Some(warning) = key_send_warning(combo) {
             eprintln!("reflexd: warning {warning}");
@@ -47,6 +56,7 @@ impl KeyboardOutput {
         for modifier in modifiers.iter().rev() {
             self.emit_key(*modifier, 0)?;
         }
+        self.restore_modifiers(restore_modifiers)?;
         Ok(())
     }
 
@@ -74,6 +84,13 @@ impl KeyboardOutput {
     fn release_modifiers(&self) -> Result<()> {
         for modifier in MODIFIERS {
             self.emit_key(modifier, 0)?;
+        }
+        Ok(())
+    }
+
+    fn restore_modifiers(&self, modifiers: &[Key]) -> Result<()> {
+        for modifier in modifiers {
+            self.emit_key(*modifier, 1)?;
         }
         Ok(())
     }
@@ -122,7 +139,7 @@ fn send_combo_keys(combo: &str) -> Result<(Vec<Key>, Vec<Key>)> {
     ))
 }
 
-const MODIFIERS: [Key; 8] = [
+pub(crate) const MODIFIERS: [Key; 8] = [
     Key::KEY_LEFTCTRL,
     Key::KEY_RIGHTCTRL,
     Key::KEY_LEFTSHIFT,

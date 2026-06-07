@@ -1,5 +1,5 @@
 use crate::inputs::error::{KeypressError, Result};
-use crate::inputs::keyboard::KeyboardOutput;
+use crate::inputs::keyboard::{KeyboardOutput, MODIFIERS};
 use crate::inputs::keys::{KeyCombo, KeySpec, parse_combo};
 use evdev::{AttributeSetRef, Device, EventType, InputEvent, Key, RelativeAxisType};
 use reflex_core::protocol::{BindEvent, BindPhase};
@@ -138,11 +138,13 @@ impl LinuxKeypress {
     }
 
     pub fn key_type(&self, text: &str) -> Result<()> {
-        self.keyboard_output()?.type_text(text)
+        let (keyboard, restore_modifiers) = self.keyboard_output_with_modifiers()?;
+        keyboard.type_text_restoring_modifiers(text, &restore_modifiers)
     }
 
     pub fn key_send(&self, combo: &str) -> Result<()> {
-        self.keyboard_output()?.send_combo(combo)
+        let (keyboard, restore_modifiers) = self.keyboard_output_with_modifiers()?;
+        keyboard.send_combo_restoring_modifiers(combo, &restore_modifiers)
     }
 
     pub fn key_down(&self, key: &str) -> Result<()> {
@@ -161,6 +163,16 @@ impl LinuxKeypress {
             .keyboard
             .clone()
             .ok_or_else(|| KeypressError::Input("keyboard output is not available".to_string()))
+    }
+
+    fn keyboard_output_with_modifiers(&self) -> Result<(KeyboardOutput, Vec<Key>)> {
+        self.ensure_listener()?;
+        let state = self.state.lock().unwrap();
+        let keyboard = state
+            .keyboard
+            .clone()
+            .ok_or_else(|| KeypressError::Input("keyboard output is not available".to_string()))?;
+        Ok((keyboard, state.held_forwarded_modifiers()))
     }
 
     fn ensure_listener(&self) -> Result<()> {
@@ -203,6 +215,20 @@ impl LinuxKeypress {
         }
 
         Ok(())
+    }
+}
+
+impl State {
+    fn held_forwarded_modifiers(&self) -> Vec<Key> {
+        MODIFIERS
+            .into_iter()
+            .filter(|modifier| {
+                let modifier_code = modifier.code();
+                self.forwarded.iter().any(|(physical, target)| {
+                    *target == modifier_code && self.pressed.contains(physical)
+                })
+            })
+            .collect()
     }
 }
 
@@ -780,6 +806,62 @@ mod tests {
             combo: combo.to_string(),
             phase: BindPhase::Up,
         }
+    }
+
+    #[test]
+    fn held_forwarded_modifiers_include_physical_modifiers() {
+        let mut state = State::default();
+        state.pressed.insert(Key::KEY_LEFTSHIFT.code());
+        state
+            .forwarded
+            .insert(Key::KEY_LEFTSHIFT.code(), Key::KEY_LEFTSHIFT.code());
+
+        assert_eq!(state.held_forwarded_modifiers(), vec![Key::KEY_LEFTSHIFT]);
+    }
+
+    #[test]
+    fn held_forwarded_modifiers_include_remapped_modifiers() {
+        let mut state = State::default();
+        state.pressed.insert(Key::KEY_CAPSLOCK.code());
+        state
+            .forwarded
+            .insert(Key::KEY_CAPSLOCK.code(), Key::KEY_LEFTCTRL.code());
+
+        assert_eq!(state.held_forwarded_modifiers(), vec![Key::KEY_LEFTCTRL]);
+    }
+
+    #[test]
+    fn held_forwarded_modifiers_ignore_unforwarded_or_released_keys() {
+        let mut state = State::default();
+        state.pressed.insert(Key::KEY_LEFTSHIFT.code());
+        assert!(state.held_forwarded_modifiers().is_empty());
+
+        state
+            .forwarded
+            .insert(Key::KEY_LEFTALT.code(), Key::KEY_LEFTALT.code());
+        assert!(state.held_forwarded_modifiers().is_empty());
+    }
+
+    #[test]
+    fn held_forwarded_modifiers_deduplicate_targets_in_stable_order() {
+        let mut state = State::default();
+        state.pressed.insert(Key::KEY_CAPSLOCK.code());
+        state.pressed.insert(Key::KEY_LEFTSHIFT.code());
+        state.pressed.insert(Key::KEY_RIGHTSHIFT.code());
+        state
+            .forwarded
+            .insert(Key::KEY_CAPSLOCK.code(), Key::KEY_LEFTCTRL.code());
+        state
+            .forwarded
+            .insert(Key::KEY_LEFTSHIFT.code(), Key::KEY_LEFTSHIFT.code());
+        state
+            .forwarded
+            .insert(Key::KEY_RIGHTSHIFT.code(), Key::KEY_LEFTSHIFT.code());
+
+        assert_eq!(
+            state.held_forwarded_modifiers(),
+            vec![Key::KEY_LEFTCTRL, Key::KEY_LEFTSHIFT]
+        );
     }
 
     #[test]
