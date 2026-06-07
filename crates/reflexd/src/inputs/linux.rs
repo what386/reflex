@@ -359,6 +359,7 @@ fn handle_key_down(
         .bindings
         .iter()
         .filter(|binding| binding.keys.is_subset(&pressed_set))
+        .filter(|binding| binding.keys.contains(&code))
         .cloned()
         .collect::<Vec<_>>();
     for binding in matching {
@@ -924,6 +925,60 @@ mod tests {
             vec![down_event("ctrl+t"), up_event("ctrl+t")]
         );
         assert!(handle_key_event_locked(key_event(Key::KEY_LEFTCTRL, 0), &mut state).is_empty());
+    }
+
+    #[test]
+    fn held_mouse_bind_does_not_refire_on_unrelated_key_down() {
+        let mut state = State::default();
+        add_combo_binding_with_phase(&mut state, 1, 0, "mouse_right", BindPhase::Down);
+        add_combo_binding_with_phase(&mut state, 1, 0, "mouse_right", BindPhase::Up);
+
+        assert!(handle_key_event_locked(key_event(Key::BTN_RIGHT, 1), &mut state).is_empty());
+        assert_eq!(pending_events(&state, 1), vec![down_event("mouse_right")]);
+        state.pending_bindings.get_mut(&1).unwrap().clear();
+
+        let events = handle_key_event_locked(key_event(Key::KEY_W, 1), &mut state);
+
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_W.code(), 1)]);
+        assert!(
+            state
+                .pending_bindings
+                .get(&1)
+                .is_none_or(VecDeque::is_empty)
+        );
+        assert_eq!(state.active_up_bindings.len(), 1);
+
+        let events = handle_key_event_locked(key_event(Key::KEY_W, 0), &mut state);
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_W.code(), 0)]);
+        assert!(
+            state
+                .pending_bindings
+                .get(&1)
+                .is_none_or(VecDeque::is_empty)
+        );
+
+        assert!(handle_key_event_locked(key_event(Key::BTN_RIGHT, 0), &mut state).is_empty());
+        assert_eq!(pending_events(&state, 1), vec![up_event("mouse_right")]);
+    }
+
+    #[test]
+    fn held_single_key_bind_does_not_refire_on_unrelated_key_down() {
+        let mut state = State::default();
+        add_combo_binding(&mut state, 1, 0, "forward");
+
+        assert!(handle_key_event_locked(key_event(Key::BTN_EXTRA, 1), &mut state).is_empty());
+        assert_eq!(pending_events(&state, 1), vec![down_event("forward")]);
+        state.pending_bindings.get_mut(&1).unwrap().clear();
+
+        let events = handle_key_event_locked(key_event(Key::KEY_A, 1), &mut state);
+
+        assert_eq!(event_tuples(&events), vec![(Key::KEY_A.code(), 1)]);
+        assert!(
+            state
+                .pending_bindings
+                .get(&1)
+                .is_none_or(VecDeque::is_empty)
+        );
     }
 
     #[test]
