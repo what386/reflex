@@ -16,7 +16,8 @@ test:
 
 
 start-daemon *args:
-    sudo cargo run --bin "reflexd" -- {{args}}
+    cargo build --bin "reflexd"
+    sudo ./target/debug/reflexd
 
 run *args:
     cargo run --bin "reflex" -- {{args}}
