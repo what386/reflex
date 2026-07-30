@@ -120,6 +120,57 @@ reflex.process.kill(pid)
 reflex.process.pkill("kitty")                -- number of matched processes signaled
 ```
 
+## reflex.window
+
+Window APIs are handled by the local runner. They observe windows but do not
+focus, close, move, minimize, or otherwise control them.
+
+```lua
+local windows = reflex.window.list()         -- array of Window objects
+local win = reflex.window.find("terminal")   -- case-insensitive Lua title pattern
+local found = reflex.window.exists("%.lua$")
+local waited = reflex.window.wait("Build", 5) -- timeout in seconds; nil on timeout
+
+local by_app = reflex.window.find(function(candidate)
+  return candidate:app_id() == "org.mozilla.firefox"
+end)
+
+if win then
+  print(win:id())                            -- opaque mapped-lifetime ID
+  print(win:title())
+  print(win:app_id())                        -- string or nil
+  print(win:exists())                        -- false after window::closed
+end
+```
+
+`wait()` waits indefinitely when no timeout is supplied. A timeout of `0`
+performs an immediate lookup. Negative, infinite, and NaN timeouts are errors.
+Under `reflex check`, window lists are empty and waits return immediately.
+
+List ordering and the first result returned by `find()` are backend-defined.
+String selectors match titles. Use a predicate to match `app_id()` or other
+metadata.
+
+```lua
+reflex.signal.connect("window::opened", function(win) end)
+reflex.signal.connect("window::closed", function(win) end)
+reflex.signal.connect("window::title_changed", function(win, title) end)
+```
+
+Windows present when observation starts form the initial baseline and do not
+emit `window::opened`. A handle passed to `window::closed` keeps its cached ID,
+title, and app ID, while `exists()` returns `false`.
+
+Supported backends are EWMH X11, KDE Plasma's native Wayland window-management
+protocol, standard or wlroots foreign-toplevel protocols, and GNOME Shell's
+Introspect D-Bus API. Wayland sessions never silently fall back to X11.
+
+GNOME must authorize
+`org.gnome.Shell.Introspect.GetWindows`; current upstream Shell normally
+requires unsafe mode. Reflex does not enable it automatically. The backend can
+be selected explicitly for diagnostics with
+`REFLEX_WINDOW_BACKEND=auto|wayland|x11|kde|gnome|ext|wlr`.
+
 ## reflex.str
 
 ```lua
@@ -147,4 +198,3 @@ reflex.table.filter({ 1, 2, 3 }, function(value) return value > 1 end)
 - Combos are joined with `+`: `"ctrl+shift+t"`.
 - Mouse buttons: `"left"`, `"right"`, `"middle"`, `"back"`, `"forward"`.
 - Mouse-button binds and hotkeys use `"mouse_left"`, `"mouse_right"`, `"mouse_middle"`, `"back"`, and `"forward"`. In binds, `"left"` and `"right"` are arrow keys. `"back"` and `"forward"` match both common Linux thumb-button code families.
-- V1 intentionally does not include window APIs.

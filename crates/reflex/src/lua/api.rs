@@ -1,5 +1,5 @@
 use crate::host::{NotificationOptions, NotificationUrgency};
-use crate::lua::components::{signal, timer};
+use crate::lua::components::{signal, timer, window};
 use crate::lua::errors::{ErrorKind, LuaError};
 use crate::lua::runtime::{BindingCallback, RuntimeState};
 use crate::lua::stdlib;
@@ -22,7 +22,8 @@ pub(crate) fn register_api(lua: &Lua, state: Rc<RefCell<RuntimeState>>) -> Resul
     register_mouse(lua, &reflex, state.clone())?;
     register_clipboard(lua, &reflex, state.clone())?;
     timer::register_lua(lua, &reflex, state.clone())?;
-    register_process(lua, &reflex, state)?;
+    register_process(lua, &reflex, state.clone())?;
+    window::register_lua(lua, &reflex, state)?;
     stdlib::register(lua)?;
     Ok(())
 }

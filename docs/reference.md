@@ -7,18 +7,12 @@
 All built-in signals follow `domain::event` naming. Connect to them with `reflex.signal.connect()`.
 
 ### Window signals
+
 | Signal | Callback args | Notes |
 |---|---|---|
 | `window::opened` | `win` | Fires when any window appears |
 | `window::closed` | `win` | Fires when any window closes |
-| `window::focused` | `win` | Window gained focus |
-| `window::unfocused` | `win` | Window lost focus |
-| `window::moved` | `win, x, y` | Window was moved |
-| `window::resized` | `win, w, h` | Window was resized |
 | `window::title_changed` | `win, title` | Window title changed |
-| `window::minimized` | `win` | |
-| `window::maximized` | `win` | |
-| `window::restored` | `win` | Un-minimized or un-maximized |
 
 ### Screen signals
 | Signal | Callback args | Notes |
@@ -155,7 +149,9 @@ Order within modifiers doesn't matter — `ctrl+shift` and `shift+ctrl` are the 
 
 ## Pattern Matching
 
-`reflex.window.find()` and flat window functions accept partial, case-insensitive title matches. You can also pass a Lua pattern:
+`reflex.window.find()`, `exists()`, and `wait()` accept case-insensitive Lua
+title patterns. Ordinary text therefore behaves like a partial match. You can
+also pass a predicate:
 
 ```lua
 reflex.window.find("notepad")           -- matches "Notepad", "Notepad++" etc.
@@ -164,3 +160,21 @@ reflex.window.find(function(win)        -- predicate function for full control
     return win:title():match("%.lua$") and win:exists()
 end)
 ```
+
+## Windows
+
+```lua
+reflex.window.list()                    -- Window[]
+reflex.window.find(selector)            -- Window or nil
+reflex.window.exists(selector)          -- boolean
+reflex.window.wait(selector [, timeout]) -- Window or nil
+
+win:id()                                -- opaque string
+win:title()                             -- string
+win:app_id()                            -- string or nil
+win:exists()                            -- boolean
+```
+
+Window IDs identify one mapped lifetime and must not be persisted across
+launches. Initial windows do not emit `window::opened`. Closed handles retain
+cached metadata and report `exists() == false`.

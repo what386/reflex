@@ -1,5 +1,6 @@
 use crate::lua::ErrorKind;
 use crate::lua::LuaError;
+use crate::window::WindowController;
 use notify_rust::{Notification, Timeout, Urgency};
 pub use reflex_core::{BindEvent, BindPhase, MouseMoveMode};
 use reflex_core::{key_send_warning, validate_key_combo, validate_key_name};
@@ -24,6 +25,7 @@ pub struct Host {
     pub process: Arc<dyn ProcessController>,
     pub clipboard: Arc<dyn ClipboardController>,
     pub notifications: Arc<dyn NotificationController>,
+    pub windows: Arc<dyn WindowController>,
 }
 
 pub trait Remapper: Send + Sync {
@@ -102,6 +104,7 @@ pub fn check_host() -> Host {
         process: check.clone(),
         clipboard: check.clone(),
         notifications: check,
+        windows: crate::window::check_controller(),
     }
 }
 
@@ -118,6 +121,7 @@ pub fn daemon_host_from(daemon: Arc<crate::daemon::client::DaemonHost>) -> Host 
         process: Arc::new(LocalProcessController),
         clipboard: Arc::new(CommandClipboard),
         notifications: Arc::new(DesktopNotificationController),
+        windows: crate::window::auto_controller(),
     }
 }
 
@@ -130,6 +134,7 @@ fn host(name: &'static str) -> Host {
         process: Arc::new(LocalProcessController),
         clipboard: Arc::new(CommandClipboard),
         notifications: Arc::new(DesktopNotificationController),
+        windows: crate::window::unsupported_controller(name),
     }
 }
 

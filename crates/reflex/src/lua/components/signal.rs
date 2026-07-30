@@ -51,6 +51,16 @@ pub(crate) fn register_lua(
         .set(
             "connect",
             lua.create_function(move |_, (name, callback): (String, Function)| {
+                if matches!(
+                    name.as_str(),
+                    "window::opened" | "window::closed" | "window::title_changed"
+                ) {
+                    st.borrow()
+                        .host()
+                        .windows
+                        .snapshot()
+                        .map_err(mlua::Error::external)?;
+                }
                 st.borrow_mut().signals.connect(name, callback);
                 Ok(())
             })

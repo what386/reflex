@@ -1,6 +1,7 @@
 use crate::lua::api::register_api;
 use crate::lua::components::signal::{self, SignalState};
 use crate::lua::components::timer::TimerState;
+use crate::lua::components::window;
 use crate::lua::errors::{ErrorKind, LuaError};
 use crate::lua::sandbox::configure_sandbox;
 use crate::lua::types::RuntimeConfig;
@@ -75,6 +76,7 @@ impl Runtime {
         self.emit("reflex::started")?;
         while !self.should_exit() {
             self.poll_bindings()?;
+            self.poll_windows()?;
             self.poll_timers()?;
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -118,6 +120,34 @@ impl Runtime {
             for callback in callbacks {
                 callback.call::<()>(()).map_err(lua_err)?;
             }
+        }
+        Ok(())
+    }
+
+    pub fn poll_windows(&self) -> Result<(), LuaError> {
+        let host = self.state.borrow().host();
+        for event in host.windows.drain_events()? {
+            let (name, args) = match event {
+                crate::window::WindowEvent::Opened(window_handle) => (
+                    "window::opened",
+                    vec![window::window_value(&self.lua, window_handle).map_err(lua_err)?],
+                ),
+                crate::window::WindowEvent::Closed(window_handle) => (
+                    "window::closed",
+                    vec![window::window_value(&self.lua, window_handle).map_err(lua_err)?],
+                ),
+                crate::window::WindowEvent::TitleChanged {
+                    window: window_handle,
+                    title,
+                } => (
+                    "window::title_changed",
+                    vec![
+                        window::window_value(&self.lua, window_handle).map_err(lua_err)?,
+                        Value::String(self.lua.create_string(title).map_err(lua_err)?),
+                    ],
+                ),
+            };
+            self.emit_with_args(name, args)?;
         }
         Ok(())
     }

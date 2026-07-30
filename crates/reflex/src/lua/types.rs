@@ -4,6 +4,7 @@ pub use crate::host::{
     ClipboardController, Host as ReflexHost, InputController, MouseMoveMode, ProcessController,
     Remapper,
 };
+pub use crate::window::{WindowController, WindowData, WindowEvent, WindowHandle, WindowSnapshot};
 
 #[derive(Clone)]
 pub struct RuntimeConfig {

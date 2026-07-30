@@ -1,6 +1,6 @@
 # reflex
 
-`reflex` is a Lua-driven input automation tool for Linux. You write small Lua scripts that register hotkeys, remaps, timers, clipboard actions, process helpers, and other automation rules. The companion daemon, `reflexd`, owns input handling while scripts are loaded and unloaded.
+`reflex` is a Lua-driven input automation tool for Linux. You write small Lua scripts that register hotkeys, remaps, timers, clipboard actions, process helpers, window observers, and other automation rules. The companion daemon, `reflexd`, owns input handling while scripts are loaded and unloaded.
 
 ## Install
 
@@ -141,6 +141,44 @@ reflex.signal.connect("reflex::started", function()
 end)
 ```
 
+### Observe windows
+
+```lua
+for _, win in ipairs(reflex.window.list()) do
+  print(win:id(), win:title(), win:app_id())
+end
+
+local editor = reflex.window.find(function(win)
+  return win:app_id() == "org.gnome.TextEditor"
+end)
+
+reflex.signal.connect("window::opened", function(win)
+  print("opened", win:title())
+end)
+```
+
+Window observation works with EWMH window managers on X11 and with supported
+foreign-toplevel interfaces on Wayland:
+
+| Session | Backend |
+|---|---|
+| X11 | EWMH `_NET_CLIENT_LIST` |
+| KDE Plasma Wayland | `org_kde_plasma_window_management` |
+| wlroots and other compatible compositors | `ext_foreign_toplevel_list_v1`, falling back to `zwlr_foreign_toplevel_manager_v1` |
+| GNOME Wayland | `org.gnome.Shell.Introspect.GetWindows` |
+
+GNOME restricts its introspection API. Reflex does not weaken that restriction:
+the session must already authorize `GetWindows` (on current upstream GNOME
+Shell this requires unsafe mode). If GNOME returns `AccessDenied`, Reflex
+reports the requirement instead of changing the session. Enabling unsafe mode
+has broader privacy and security implications because it relaxes Shell
+restrictions for local session clients.
+
+When `WAYLAND_DISPLAY` is set, Reflex does not fall back to X11 because that
+would expose only XWayland windows. For diagnostics and nested sessions, set
+`REFLEX_WINDOW_BACKEND` to `auto`, `wayland`, `x11`, `kde`, `gnome`, `ext`, or
+`wlr`.
+
 ## API Highlights
 
 Common namespaces include:
@@ -153,6 +191,7 @@ Common namespaces include:
 - `reflex.clipboard`
 - `reflex.timer`
 - `reflex.process`
+- `reflex.window`
 - `reflex.str`
 - `reflex.table`
 - `reflex.signal`
@@ -165,6 +204,7 @@ For more complete reference material, see [`docs/lua_api.md`](docs/lua_api.md).
 - Combos are joined with `+`, for example `ctrl+shift+t`.
 - Clipboard support is text-only.
 - `reflex.process` is handled by the local runner, not `reflexd`.
+- `reflex.window` is handled by the local desktop session, not `reflexd`.
 - `reflexd` is required for input bindings and hotkeys to work.
 
 ## Development
