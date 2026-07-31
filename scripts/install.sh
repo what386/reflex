@@ -5,7 +5,10 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 release_dir="$repo_root/target/release"
 service_name="reflexd.service"
 service_src="$repo_root/crates/reflexd/$service_name"
+desktop_name="reflex.desktop"
+desktop_src="$repo_root/desktop/$desktop_name"
 bin_dir="/usr/local/bin"
+desktop_dir="/usr/local/share/applications"
 systemd_dir="/etc/systemd/system"
 
 require_command() {
@@ -31,6 +34,11 @@ if [[ ! -f "$service_src" ]]; then
     exit 1
 fi
 
+if [[ ! -f "$desktop_src" ]]; then
+    echo "install.bash: missing desktop entry: $desktop_src" >&2
+    exit 1
+fi
+
 cd "$repo_root"
 
 echo "install.bash: building release binaries"
@@ -39,6 +47,9 @@ cargo build --release --bin reflex --bin reflexd
 echo "install.bash: installing reflex and reflexd to $bin_dir"
 "${sudo_cmd[@]}" install -Dm755 "$release_dir/reflex" "$bin_dir/reflex"
 "${sudo_cmd[@]}" install -Dm755 "$release_dir/reflexd" "$bin_dir/reflexd"
+
+echo "install.bash: installing $desktop_name to $desktop_dir"
+"${sudo_cmd[@]}" install -Dm644 "$desktop_src" "$desktop_dir/$desktop_name"
 
 echo "install.bash: installing $service_name to $systemd_dir"
 "${sudo_cmd[@]}" install -Dm644 "$service_src" "$systemd_dir/$service_name"
