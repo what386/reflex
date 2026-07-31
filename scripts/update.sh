@@ -41,7 +41,7 @@ fi
 
 cd "$repo_root"
 
-echo "update.bash: building release binaries"
+echo "update.bash: building the Reflex GUI/CLI and daemon"
 cargo build --release --bin reflex --bin reflexd
 
 echo "update.bash: stopping old $service_name if it is running"

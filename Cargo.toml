@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/reflex-core", "crates/reflex", "crates/reflexd"]
+members = [
+    "crates/reflex-core",
+    "crates/reflex-cli",
+    "crates/reflex-gui",
+    "crates/reflex",
+    "crates/reflexd",
+]
 resolver = "2"
 
 [workspace.dependencies]
@@ -8,3 +14,5 @@ evdev = "0.12.2"
 mlua = { version = "0.11.6", features = ["luajit", "vendored"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+eframe = { version = "0.35.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
+rfd = "0.17.2"

@@ -1,0 +1,10 @@
+[package]
+name = "reflex-gui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = { workspace = true }
+reflex-cli = { path = "../reflex-cli" }
+reflex-core = { path = "../reflex-core" }
+rfd = { workspace = true }

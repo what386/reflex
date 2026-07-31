@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Reflex
 Type=Application
-Exec="/usr/local/bin/reflex"
-Terminal=true
+Exec=/usr/local/bin/reflex gui
+Terminal=false
 X-KDE-Wayland-Interfaces=org_kde_plasma_window_management

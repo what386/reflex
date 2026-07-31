@@ -14,7 +14,7 @@ The repository provides shell scripts for building and installing the release bi
 
 This script:
 
-1. Builds release binaries for `reflex` and `reflexd`.
+1. Builds the `reflex` GUI/CLI binary and `reflexd`.
 2. Installs them to `/usr/local/bin`.
 3. Installs the systemd unit for `reflexd`.
 4. Enables and restarts the daemon.
@@ -68,6 +68,7 @@ reflex check my_script.lua
 ```sh
 reflex run script.lua
 reflex run -d script.lua
+reflex gui
 reflex list
 reflex stop <id|script>
 reflex status
@@ -75,6 +76,7 @@ reflex check script.lua
 reflex keys
 ```
 
+- `gui` opens the script launcher and running-script dashboard.
 - `run` loads a script into `reflexd`.
 - `run -d` starts the script in the background.
 - `list`, `stop`, and `status` talk to the daemon.

@@ -41,7 +41,7 @@ fi
 
 cd "$repo_root"
 
-echo "install.bash: building release binaries"
+echo "install.bash: building the Reflex GUI/CLI and daemon"
 cargo build --release --bin reflex --bin reflexd
 
 echo "install.bash: installing reflex and reflexd to $bin_dir"
